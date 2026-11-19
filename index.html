@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Christmas Wonderland</title>
+  <style>
+    * { box-sizing: border-box }
+    html, body { margin: 0; height: 100%; background: #10264a; font-family: Georgia, serif }
+    main { height: 100dvh; min-height: 420px; position: relative; overflow: hidden; background: #dcd6dc }
+    #friendsStage { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1 }
+    .shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(12,29,68,.27), transparent 48%); pointer-events: none }
+    .title { position: absolute; top: 5%; left: 5%; color: white; text-shadow: 0 2px 15px #183759a0; z-index: 5 }
+    .title small { font: 600 clamp(9px,1.3vw,16px) Arial; letter-spacing: .42em }
+    .title h1 { font-size: clamp(34px,5.3vw,90px); line-height: .96; font-weight: 500; margin: 12px 0 }
+    .title p { font-size: clamp(12px,1.55vw,23px) }
+    .santa {
+      position: absolute; left: 0; top: 0; height: 0; z-index: 3; cursor: pointer;
+      border: 0; border-radius: 0; padding: 0; background: transparent;
+    }
+    .santa::before {
+      content: ''; position: absolute; bottom: 3%; left: 28%; width: 57%; height: 6%;
+      background: radial-gradient(ellipse, #59445255 0%, #59445223 45%, transparent 72%);
+    }
+    .santa canvas { position: relative; display: block; width: auto; height: 100% }
+    .santa:focus-visible { outline: 2px solid #624746; outline-offset: 4px }
+    .footer-bar {
+      position: absolute; bottom: 2%; left: 2%; right: 2%; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    }
+    .controls { display: flex; gap: 7px; flex-shrink: 0 }
+    button { background: #ffffffd9; color: #244768; border: 1px solid #ffffffb0; border-radius: 30px; padding: 10px 14px; cursor: pointer; font: 600 12px Arial }
+    .activity-links { display: flex; gap: 9px }
+    .activity-link {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      min-height: 44px; padding: 11px 17px; border: 1px solid #d4b574;
+      border-radius: 24px; background: #fffaf0ed; color: #69352e;
+      box-shadow: 0 3px 12px #5c3b2e14; font: 600 13px/1.3 Arial, sans-serif;
+      text-align: center; text-decoration: none;
+    }
+    .activity-link:hover { background: #fff2cf; border-color: #ad7b36 }
+    .activity-link:focus-visible { outline: 3px solid #69352e; outline-offset: 3px }
+    .activity-link span { color: #946a32; font-size: 16px }
+    .status { position: absolute; bottom: calc(2% + 57px); right: 2%; font: 12px Arial; color: #fff; text-shadow: 0 1px 4px #333; z-index: 9 }
+    .spark { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4 }
+    .scene-snow {
+      left: var(--scene-snow-left, 74%);
+      mask-image: linear-gradient(to right, transparent, #000 11%);
+    }
+    .scene-flake {
+      position: absolute; top: -42px;
+      width: calc(var(--flake-size) * var(--scene-snow-scale, 1)); aspect-ratio: 1;
+      background: url('assets/scene-snowflake.svg') center / contain no-repeat;
+      filter: drop-shadow(0 0 1px #fff5);
+      animation: scene-fall var(--fall-time) linear var(--fall-delay) infinite paused;
+    }
+    .scene-snow.is-playing .scene-flake { animation-play-state: running }
+    .scene-flake.soft {
+      background: radial-gradient(circle, #fff 0 23%, #fffe 36%, #fff7 53%, transparent 73%);
+      filter: blur(.7px);
+    }
+    .flake { position: absolute; top: -5%; color: white; opacity: .7; animation: fall linear infinite }
+    @keyframes fall { to { transform: translateY(110vh) rotate(100deg) } }
+    @keyframes scene-fall {
+      0% { opacity: 0 }
+      8%, 76% { opacity: var(--flake-opacity) }
+      100% {
+        opacity: 0;
+        transform: translate3d(var(--drift), calc(100dvh + 72px), 0) rotate(var(--spin));
+      }
+    }
+    @media (max-width: 1100px) {
+      .footer-bar { flex-direction: column-reverse; align-items: stretch; gap: 10px }
+      .activity-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) }
+      .controls { align-self: flex-start }
+      .status { bottom: calc(2% + 112px) }
+    }
+    @media (max-width: 700px) {
+      .title { top: 8% }
+      .title h1 { font-size: clamp(30px,7vw,50px) }
+      .footer-bar { left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)) }
+      .activity-links { gap: 6px }
+      .activity-link { min-height: 58px; padding: 9px 7px; gap: 4px; border-radius: 15px; font-size: 11px }
+      .activity-link span { font-size: 13px }
+      .status { bottom: 138px; right: 12px }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .flake { animation: none }
+      .scene-flake { top: var(--rest-top); opacity: var(--flake-opacity); animation: none }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="shade"></div>
+    <canvas id="friendsStage" aria-hidden="true"></canvas>
+    <video id="friendsVideo" src="assets/friends_scene.mp4" muted loop playsinline preload="auto" hidden></video>
+    <img id="snowWoods" src="assets/snow-continuation.png" alt="" hidden>
+    <div class="spark scene-snow" id="sceneSnow" aria-hidden="true"></div>
+    <div class="spark" id="snow" aria-hidden="true"></div>
+    <section class="title">
+      <small>WELCOME TO</small>
+      <h1>Christmas<br>Wonderland<span style="color:#eac36d">.</span></h1>
+      <p>A little Christmas magic is in the air ✨</p>
+    </section>
+    <button class="santa" id="santa" type="button" aria-label="Santa Claus">
+      <canvas id="santaStage" width="500" height="600" aria-hidden="true"></canvas>
+    </button>
+    <video id="santaVideo" muted loop playsinline preload="auto" hidden></video>
+    <div class="footer-bar">
+      <div class="controls">
+        <button id="pause">▶ Play</button>
+        <button id="snowBtn" aria-pressed="true">❄ Snow: On</button>
+        <button id="full">⛶ Full screen</button>
+      </div>
+      <nav class="activity-links" aria-label="Christmas activities">
+        <a class="activity-link" href="https://yukuri100-commits.github.io/christmas-gift-wall-2026/" target="_blank" rel="noopener noreferrer" title="Opens in a new tab">
+          Santa's Gift Wall <span aria-hidden="true">↗</span>
+        </a>
+        <a class="activity-link" href="https://yukuri100-commits.github.io/penguin-snow-adventure/" target="_blank" rel="noopener noreferrer" title="Opens in a new tab">
+          Christmas Delivery <span aria-hidden="true">↗</span>
+        </a>
+        <a class="activity-link" href="https://yukuri100-commits.github.io/christmas-vocabulary-adventure/" target="_blank" rel="noopener noreferrer" title="Opens in a new tab">
+          Christmas Vocabulary Adventure <span aria-hidden="true">↗</span>
+        </a>
+      </nav>
+    </div>
+    <div class="status" id="status" role="status"></div>
+  </main>
+  <script src="assets/santa-wave.js"></script>
+  <script>
+    const stage = document.querySelector('main');
+    const santa = document.querySelector('#santa');
+    const santaVideo = document.querySelector('#santaVideo');
+    const santaStage = document.querySelector('#santaStage');
+    const santaContext = santaStage.getContext('2d', { willReadFrequently: true });
+    const santaWidth = santaStage.width;
+    const santaHeight = santaStage.height;
+    const whiteMask = new Uint8Array(santaWidth * santaHeight);
+    const floodQueue = new Uint32Array(whiteMask.length);
+    const friendsVideo = document.querySelector('#friendsVideo');
+    const videos = [friendsVideo, santaVideo];
+    const woods = document.querySelector('#snowWoods');
+    const friendsStage = document.querySelector('#friendsStage');
+    const scenery = friendsStage.getContext('2d');
+    const snowSeam = document.createElement('canvas');
+    const seam = snowSeam.getContext('2d');
+    const status = document.querySelector('#status');
+    const pauseButton = document.querySelector('#pause');
+    const snowButton = document.querySelector('#snowBtn');
+    const fullButton = document.querySelector('#full');
+    const snow = document.querySelector('#snow');
+    const sceneSnow = document.querySelector('#sceneSnow');
+    const snowSceneStart = 1.2;
+    const friendsRatio = 1920 / 1080;
+    const landscapeRatio = 2480 / 1080;
+
+    let introSeekAttempted = false;
+    let lastSantaTime = -1;
+    let scene;
+
+    function makeEdgeTint(stops) {
+      const tint = document.createElement('canvas');
+      tint.width = 96;
+      tint.height = 192;
+      const ctx = tint.getContext('2d');
+      const colors = ctx.createLinearGradient(0, 0, 0, tint.height);
+      for (const [offset, color] of stops) colors.addColorStop(offset, color);
+      ctx.fillStyle = colors;
+      ctx.fillRect(0, 0, tint.width, tint.height);
+      ctx.globalCompositeOperation = 'destination-in';
+      const fade = ctx.createLinearGradient(0, 0, tint.width, 0);
+      fade.addColorStop(0, '#fff');
+      fade.addColorStop(.48, '#fff6');
+      fade.addColorStop(1, '#fff0');
+      ctx.fillStyle = fade;
+      ctx.fillRect(0, 0, tint.width, tint.height);
+      return tint;
+    }
+
+    // Match the sampled sky and snow tones of the original frame near the join.
+    const edgeShade = makeEdgeTint([
+      [0, '#fffff1'], [.1, '#fffdf4'], [.24, '#f6fbf4'], [.35, '#f4f6f4'],
+      [.52, '#f3f1ef'], [.69, '#f2f1f0'], [.79, '#fafcf9'], [1, '#fffcfd']
+    ]);
+    const edgeLight = makeEdgeTint([
+      [0, '#070200'], [.12, '#000'], [.3, '#000400'], [.42, '#000'], [1, '#020300']
+    ]);
+
+    function paintWoods() {
+      if (!woods.naturalWidth) return;
+      const { width } = friendsStage;
+      const { sceneTop, sceneHeight, sceneWidth, landscapeWidth } = scene;
+      scenery.drawImage(woods, 0, sceneTop, landscapeWidth, sceneHeight);
+      if (landscapeWidth >= width) return;
+
+      // Extend only the far edge on ultrawide windows, using the existing distant landscape.
+      const extra = width - landscapeWidth;
+      const sample = Math.min(extra, landscapeWidth - sceneWidth) * woods.naturalWidth / landscapeWidth;
+      scenery.save();
+      scenery.translate(width, sceneTop);
+      scenery.scale(-1, 1);
+      scenery.drawImage(woods, woods.naturalWidth - sample, 0, sample, woods.naturalHeight, 0, 0, extra, sceneHeight);
+      scenery.restore();
+    }
+
+    function fillOutsideScene() {
+      const { width, height } = friendsStage;
+      const { sceneTop, sceneHeight } = scene;
+      if (sceneTop > 0) {
+        const sky = scenery.createLinearGradient(0, 0, 0, sceneTop);
+        sky.addColorStop(0, '#a3adc1');
+        sky.addColorStop(1, '#b2bacd');
+        scenery.fillStyle = sky;
+        scenery.fillRect(0, 0, width, sceneTop);
+      }
+      const bottom = sceneTop + sceneHeight;
+      if (bottom < height) {
+        scenery.drawImage(friendsStage, 0, bottom - 1, width, 1, 0, bottom, width, height - bottom);
+      }
+    }
+
+    function drawFriends() {
+      if (!scene || friendsVideo.readyState < 2 || friendsVideo.seeking) return;
+      // Keep the last snowy frame visible when the native loop reaches the white intro.
+      if (friendsVideo.currentTime < snowSceneStart - .04) {
+        const buffered = friendsVideo.buffered;
+        if (!introSeekAttempted && buffered.length && buffered.start(0) <= snowSceneStart && buffered.end(0) > snowSceneStart) {
+          introSeekAttempted = true;
+          friendsVideo.currentTime = snowSceneStart;
+        }
+        return;
+      }
+      introSeekAttempted = false;
+
+      const { width } = friendsStage;
+      const { videoWidth, videoHeight } = friendsVideo;
+      const { sceneWidth, sceneHeight, sceneTop } = scene;
+
+      paintWoods();
+      if (woods.naturalWidth) {
+        const tintWidth = sceneHeight * .27;
+        scenery.save();
+        scenery.globalCompositeOperation = 'multiply';
+        scenery.drawImage(edgeShade, sceneWidth, sceneTop, tintWidth, sceneHeight);
+        scenery.globalCompositeOperation = 'lighter';
+        scenery.drawImage(edgeLight, sceneWidth, sceneTop, tintWidth, sceneHeight);
+        scenery.restore();
+      }
+      scenery.drawImage(friendsVideo, 0, sceneTop, sceneWidth, sceneHeight);
+
+      // Continue the original edge at the same scale and blend only beyond the clip.
+      const joinWidth = Math.min(width - sceneWidth, Math.round(sceneWidth * .022));
+      if (!woods.naturalWidth || joinWidth < 1) {
+        fillOutsideScene();
+        return;
+      }
+      const edgeWidth = joinWidth * videoWidth / sceneWidth;
+      if (snowSeam.width !== joinWidth || snowSeam.height !== sceneHeight) {
+        snowSeam.width = joinWidth;
+        snowSeam.height = sceneHeight;
+      }
+      seam.globalCompositeOperation = 'source-over';
+      seam.setTransform(-1, 0, 0, 1, joinWidth, 0);
+      seam.drawImage(friendsVideo, videoWidth - edgeWidth, 0, edgeWidth, videoHeight,
+        0, 0, joinWidth, sceneHeight);
+      seam.resetTransform();
+      const fade = seam.createLinearGradient(0, 0, joinWidth, 0);
+      fade.addColorStop(0, '#000');
+      fade.addColorStop(1, '#0000');
+      seam.globalCompositeOperation = 'destination-in';
+      seam.fillStyle = fade;
+      seam.fillRect(0, 0, joinWidth, sceneHeight);
+      scenery.drawImage(snowSeam, sceneWidth, sceneTop);
+      fillOutsideScene();
+    }
+
+    function sizeFriendsStage() {
+      const density = Math.min(window.devicePixelRatio, 2);
+      friendsStage.width = Math.round(stage.clientWidth * density);
+      friendsStage.height = Math.round(stage.clientHeight * density);
+      const { width, height } = friendsStage;
+      if (!width || !height) return;
+      const sceneHeight = Math.round(Math.min(height, width / landscapeRatio));
+      const sceneWidth = Math.round(sceneHeight * friendsRatio);
+      const landscapeWidth = Math.round(sceneHeight * landscapeRatio);
+      const sceneTop = width / height < 1.3 ? Math.round((height - sceneHeight) * .37) : 0;
+      scene = { sceneWidth, sceneHeight, sceneTop, landscapeWidth };
+      sceneSnow.style.setProperty('--scene-snow-left', (sceneWidth - sceneHeight * .055) / density + 'px');
+      sceneSnow.style.setProperty('--scene-snow-scale', String(sceneHeight / (760 * density)));
+
+      // Both actors share the clip's scale. The boot soles and Rudolph's hooves use the same ground line.
+      const figureHeight = sceneHeight * .76;
+      const figureWidth = figureHeight * santaWidth / santaHeight;
+      const rightEdge = Math.min(width, landscapeWidth + sceneHeight * .065) - sceneHeight * .026;
+      santa.style.left = (rightEdge - figureWidth) / density + 'px';
+      santa.style.top = (sceneTop + sceneHeight * .855 - figureHeight * .953) / density + 'px';
+      santa.style.height = figureHeight / density + 'px';
+      paintWoods();
+      fillOutsideScene();
+      drawFriends();
+    }
+
+    function onFriendsFrame() {
+      drawFriends();
+      friendsVideo.requestVideoFrameCallback(onFriendsFrame);
+    }
+
+    new ResizeObserver(sizeFriendsStage).observe(stage);
+    woods.addEventListener('load', sizeFriendsStage);
+    friendsVideo.addEventListener('loadeddata', drawFriends);
+    friendsVideo.addEventListener('seeked', drawFriends);
+    if ('requestVideoFrameCallback' in friendsVideo) {
+      friendsVideo.requestVideoFrameCallback(onFriendsFrame);
+    } else {
+      friendsVideo.addEventListener('timeupdate', drawFriends);
+    }
+
+    function restoreCuffDetail(data) {
+      const cuffLeft = Math.floor(santaWidth * .68);
+      const cuffTop = Math.floor(santaHeight * .40);
+      const cuffBottom = Math.floor(santaHeight * .71);
+      const maxSlit = Math.round(santaHeight * .02);
+
+      // Restore a narrow highlight between the red sleeve and white cuff without growing the silhouette.
+      for (let x = cuffLeft; x < santaWidth; x++) {
+        let gapStart = -1;
+        for (let y = cuffTop; y < cuffBottom; y++) {
+          const pixel = y * santaWidth + x;
+          if (whiteMask[pixel] === 2) {
+            if (gapStart < 0) gapStart = y;
+            continue;
+          }
+          if (gapStart > cuffTop && y - gapStart <= maxSlit) {
+            const above = ((gapStart - 4) * santaWidth + x) * 4;
+            const below = pixel * 4;
+            if (data[above] - data[above + 1] >= 18 && data[below + 1] >= 178) {
+              for (let row = gapStart; row < y; row++) {
+                const inside = row * santaWidth + x;
+                const i = inside * 4;
+                if (Math.min(data[i], data[i + 1], data[i + 2]) < 249) whiteMask[inside] = 0;
+              }
+            }
+          }
+          gapStart = -1;
+        }
+      }
+    }
+
+    function removeWhiteBackdrop(data) {
+      // Only remove neutral pixels connected to a frame edge, keeping the white costume intact.
+      // The source floor turns gray under the boots and can otherwise trap white between them.
+      for (let y = 0, pixel = 0; y < santaHeight; y++) {
+        const floor = y >= santaHeight * .85;
+        const minimum = floor ? 155 : 229;
+        const colorLimit = floor ? 32 : 19;
+        for (let x = 0; x < santaWidth; x++, pixel++) {
+          const i = pixel * 4;
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          const low = Math.min(r, g, b);
+          whiteMask[pixel] = low >= minimum && Math.max(r, g, b) - low <= colorLimit ? 1 : 0;
+        }
+      }
+
+      let head = 0;
+      let tail = 0;
+      function visit(pixel) {
+        if (whiteMask[pixel] !== 1) return;
+        whiteMask[pixel] = 2;
+        floodQueue[tail++] = pixel;
+      }
+      for (let x = 0; x < santaWidth; x++) {
+        visit(x);
+        visit(whiteMask.length - santaWidth + x);
+      }
+      for (let row = 0; row < whiteMask.length; row += santaWidth) {
+        visit(row);
+        visit(row + santaWidth - 1);
+      }
+      while (head < tail) {
+        const pixel = floodQueue[head++];
+        const x = pixel % santaWidth;
+        if (x > 0) visit(pixel - 1);
+        if (x < santaWidth - 1) visit(pixel + 1);
+        if (pixel >= santaWidth) visit(pixel - santaWidth);
+        if (pixel < whiteMask.length - santaWidth) visit(pixel + santaWidth);
+      }
+      restoreCuffDetail(data);
+
+      for (let pixel = 0; pixel < whiteMask.length; pixel++) {
+        const i = pixel * 4;
+        if (whiteMask[pixel] === 2) {
+          data[i + 3] = 0;
+        } else if (whiteMask[pixel - 1] === 2 || whiteMask[pixel + 1] === 2 ||
+                   whiteMask[pixel - santaWidth] === 2 || whiteMask[pixel + santaWidth] === 2) {
+          const low = Math.min(data[i], data[i + 1], data[i + 2]);
+          const opacity = Math.max(.18, Math.min(1, (253 - low) / 42));
+          if (opacity === 1) continue;
+          const white = 253 * (1 - opacity);
+          data[i] = (data[i] - white) / opacity;
+          data[i + 1] = (data[i + 1] - white) / opacity;
+          data[i + 2] = (data[i + 2] - white) / opacity;
+          data[i + 3] = opacity * 255;
+        }
+      }
+    }
+
+    function drawSanta() {
+      if (santaVideo.readyState < 2 || santaVideo.seeking || santaVideo.currentTime === lastSantaTime) return;
+      lastSantaTime = santaVideo.currentTime;
+      // The new clip frames Santa on the far right, with blank space above and below.
+      const cropHeight = santaVideo.videoHeight * 5 / 6;
+      const cropWidth = cropHeight * santaWidth / santaHeight;
+      santaContext.drawImage(santaVideo, santaVideo.videoWidth - cropWidth, santaVideo.videoHeight * .10, cropWidth, cropHeight,
+        0, 0, santaWidth, santaHeight);
+      const frame = santaContext.getImageData(0, 0, santaWidth, santaHeight);
+      removeWhiteBackdrop(frame.data);
+      santaContext.putImageData(frame, 0, 0);
+    }
+
+    function onSantaFrame() {
+      drawSanta();
+      santaVideo.requestVideoFrameCallback(onSantaFrame);
+    }
+
+    santaVideo.addEventListener('loadeddata', drawSanta);
+    santaVideo.addEventListener('seeked', drawSanta);
+    if ('requestVideoFrameCallback' in santaVideo) {
+      santaVideo.requestVideoFrameCallback(onSantaFrame);
+    } else {
+      santaVideo.addEventListener('timeupdate', drawSanta);
+    }
+
+    function updatePlayButton() {
+      pauseButton.textContent = videos.some(video => !video.paused) ? 'Ⅱ Pause' : '▶ Play';
+      sceneSnow.classList.toggle('is-playing', !friendsVideo.paused);
+    }
+
+    async function playScene(message = '') {
+      const available = videos.filter(video => video.hasAttribute('src'));
+      const results = await Promise.allSettled(available.map(video => video.play()));
+      if (results.some(result => result.status === 'rejected' && result.reason.name === 'NotAllowedError')) {
+        status.textContent = 'Press Play to start';
+      } else if (results.every(result => result.status === 'fulfilled')) {
+        status.textContent = message;
+      }
+      updatePlayButton();
+    }
+
+    for (const video of videos) {
+      video.addEventListener('play', updatePlayButton);
+      video.addEventListener('pause', updatePlayButton);
+      video.addEventListener('error', () => {
+        status.textContent = video === santaVideo ? 'Santa video could not load' : 'Friends video could not load';
+      });
+    }
+
+    pauseButton.addEventListener('click', () => {
+      if (videos.some(video => !video.paused)) {
+        videos.forEach(video => video.pause());
+      } else {
+        playScene();
+      }
+    });
+    santa.addEventListener('click', () => {
+      if (santaVideo.readyState > 0) santaVideo.currentTime = 0;
+      playScene('Merry Christmas! ✨');
+    });
+    snowButton.addEventListener('click', () => {
+      snow.hidden = !snow.hidden;
+      snowButton.setAttribute('aria-pressed', String(!snow.hidden));
+      snowButton.textContent = snow.hidden ? '❄ Snow: Off' : '❄ Snow: On';
+    });
+    fullButton.addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await stage.requestFullscreen();
+        }
+      } catch {
+        status.textContent = 'Full screen is unavailable';
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      fullButton.textContent = document.fullscreenElement ? '⛶ Exit full screen' : '⛶ Full screen';
+    });
+
+    // Extend the snowfall baked into the left clip across the separately rendered right side.
+    const sceneFlakes = [
+      [7, 25], [16, 33], [25, 14], [35, 20], [45, 28], [55, 17], [64, 30],
+      [75, 23], [84, 15], [93, 27], [13, 12], [38, 14], [62, 20], [88, 12]
+    ];
+    sceneFlakes.forEach(([left, size], i) => {
+      const flake = document.createElement('span');
+      const soft = size < 19;
+      const phase = (.09 + i * .618) % 1;
+      const duration = 9.8 + (i * 1.7) % 6;
+      flake.className = soft ? 'scene-flake soft' : 'scene-flake';
+      flake.style.left = left + '%';
+      flake.style.setProperty('--flake-size', size + 'px');
+      flake.style.setProperty('--flake-opacity', soft ? '.68' : '.92');
+      flake.style.setProperty('--fall-time', duration + 's');
+      flake.style.setProperty('--fall-delay', -phase * duration + 's');
+      flake.style.setProperty('--rest-top', phase * 92 + '%');
+      flake.style.setProperty('--drift', (i % 2 ? -1 : 1) * (13 + i * 3 % 24) + 'px');
+      flake.style.setProperty('--spin', (i % 2 ? -1 : 1) * (58 + i * 11 % 64) + 'deg');
+      sceneSnow.append(flake);
+    });
+
+    for (let i = 0; i < 35; i++) {
+      const flake = document.createElement('span');
+      flake.className = 'flake';
+      flake.textContent = i % 4 ? '·' : '❄';
+      flake.style.left = Math.random() * 100 + '%';
+      flake.style.fontSize = 8 + Math.random() * 12 + 'px';
+      flake.style.animationDuration = 7 + Math.random() * 10 + 's';
+      flake.style.animationDelay = -Math.random() * 15 + 's';
+      snow.append(flake);
+    }
+
+    if (typeof santaWaveBase64 === 'string') {
+      const bytes = Uint8Array.from(atob(santaWaveBase64), character => character.charCodeAt(0));
+      santaVideo.src = URL.createObjectURL(new Blob([bytes], { type: 'video/mp4' }));
+      playScene();
+    } else {
+      playScene('Santa video could not load');
+    }
+  </script>
+</body>
+</html>
