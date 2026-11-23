@@ -129,8 +129,7 @@
         html.student-mode #adminBtn,
         html.student-mode #countBadge,
         html.student-mode #bottomDock,
-        html.student-mode #adminModal,
-        html.student-mode #closeStudioBtn { display: none !important; }
+        html.student-mode #adminModal { display: none !important; }
 
         /* Student artwork names are public content, not teacher/admin information.
            Show the author badge after a student taps an ornament. */
@@ -513,7 +512,7 @@
     </div>
 
     <!-- 學生觀看全班作品後，可直接返回塗鴉，不顯示教師工具列 -->
-    <button id="studentReturnToStudioBtn" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-20 btn-pill px-6 py-3 rounded-full bg-[#f3ca5f] text-[#0e3a32] font-black shadow-xl">🖍️ Draw Another Decoration</button>
+    <button id="studentReturnToStudioBtn" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-20 btn-pill px-6 py-3 rounded-full bg-[#f3ca5f] text-[#0e3a32] font-black shadow-xl">🖍️ Create a Decoration!</button>
 
     <!-- 輕提示訊息容器（取代 alert） -->
     <div id="toastBox" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-2">
@@ -1691,10 +1690,17 @@
             drawStageObserver.observe(document.getElementById('drawStage'));
         }
 
+        function syncStudentCreateButton() {
+            if (!isStudentDrawMode) return;
+            const btn = document.getElementById('studentReturnToStudioBtn');
+            btn.classList.toggle('hidden', !allowDrawing || isStudioOpen);
+        }
+
         function closeStudio() {
             isStudioOpen = false;
             studioModal.classList.add('hidden');
             studioModal.classList.remove('flex');
+            syncStudentCreateButton();
         }
 
         // ============================================================
@@ -1892,9 +1898,7 @@
                         allowDrawing = cfg.allowDrawing;
                         document.getElementById('toggleAllowDraw').checked = allowDrawing;
                         document.getElementById('openStudioBtn').classList.toggle('hidden', !allowDrawing);
-                        if (isStudentDrawMode && !allowDrawing) {
-                            document.getElementById('studentReturnToStudioBtn').classList.add('hidden');
-                        }
+                        syncStudentCreateButton();
                         if (!allowDrawing && isStudioOpen) {
                             closeStudio();
                             showStudentStatus('🔒', 'Drawing Is Paused', 'Please look at the art wall or wait for your teacher.', false);
@@ -2697,9 +2701,7 @@
         document.getElementById('studentDrawAgainBtn').addEventListener('click', openStudio);
         document.getElementById('studentViewWallBtn').addEventListener('click', () => {
             hideStudentStatus();
-            if (isStudentDrawMode && allowDrawing) {
-                document.getElementById('studentReturnToStudioBtn').classList.remove('hidden');
-            }
+            syncStudentCreateButton();
         });
         document.getElementById('studentReturnToStudioBtn').addEventListener('click', openStudio);
 
@@ -2717,11 +2719,9 @@
             initCloudSync();
             requestAnimationFrame(animateLoop);
 
-            if (isStudentDrawMode) {
-                setTimeout(() => {
-                    if (allowDrawing) openStudio();
-                }, 350);
-            }
+            // Student link opens the exhibition gallery first.
+            // Students can enter the drawing studio using Create a Decoration!
+            syncStudentCreateButton();
         }
 
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
