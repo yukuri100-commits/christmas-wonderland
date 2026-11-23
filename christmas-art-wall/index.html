@@ -1,0 +1,2563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Merry Christmas | Interactive Art Wall</title>
+
+    <!-- 學生網址 ?mode=draw：頁面載入時即隔離教師管理介面 -->
+    <script>
+        if (new URLSearchParams(location.search).get('mode') === 'draw') {
+            document.documentElement.classList.add('student-mode');
+        }
+        // 正式部署時填入 Firebase Web App 設定與可登入的教師 Google 信箱。
+        // 本機未設定 Firebase 時，只提供教師單機預覽；學生無法跨裝置送出。
+        window.CHRISTMAS_WALL_CONFIG = {
+            firebase: null,
+            teacherEmail: '',
+            wallId: null // 若原始執行環境有 __app_id，保留既有教室 ID；正式部署可自訂。
+        };
+    </script>
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Tone.js 用於柔和聖誕八音盒與互動音效 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- 載入優雅手寫體 (Merry Christmas) 與圓潤可愛中文字體 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&family=Pacifico&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --pine-bg: #0e3a32;
+            --pine-dark: #092923;
+            --cream: #faf4e6;
+            --gold: #f3ca5f;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--pine-bg);
+            font-family: 'Zen Maru Gothic', 'Noto Sans TC', sans-serif;
+            color: var(--cream);
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* 頂部 Merry Christmas 手寫體 */
+        .font-script {
+            font-family: 'Pacifico', cursive;
+            letter-spacing: 0.02em;
+            text-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+        }
+
+        /* 霧面深松綠毛玻璃面板 */
+        .pine-glass {
+            background: rgba(14, 58, 50, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1.5px solid rgba(250, 244, 230, 0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+        }
+
+        /* 按鈕回彈微動畫 */
+        .btn-pill {
+            transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease, opacity 0.2s ease;
+            cursor: pointer;
+        }
+        .btn-pill:hover {
+            transform: translateY(-2px) scale(1.03);
+        }
+        .btn-pill:active {
+            transform: translateY(1px) scale(0.96);
+        }
+
+        /* 彈窗進場動畫 */
+        @keyframes modalPop {
+            0% { opacity: 0; transform: scale(0.92) translateY(14px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .modal-animate {
+            animation: modalPop 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+
+        /* 隱藏捲軸但保留捲動功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* 畫布全螢幕自適應 */
+        #wallCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        #drawCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            cursor: crosshair;
+        }
+
+        /* 學生端只有創作與送出：不顯示教師工具、管理資訊或審核訊息。 */
+        html.student-mode #musicBtn,
+        html.student-mode #toggleUiBtn,
+        html.student-mode #adminBtn,
+        html.student-mode #countBadge,
+        html.student-mode #bottomDock,
+        html.student-mode #adminModal,
+        html.student-mode #spotlightBadge,
+        html.student-mode #closeStudioBtn { display: none !important; }
+
+        html.student-mode #studioModal { background: rgba(9, 41, 35, 0.88); }
+    </style>
+</head>
+<body class="relative w-full h-full overflow-hidden">
+
+    <!-- 主互動塗鴉牆畫布 -->
+    <canvas id="wallCanvas"></canvas>
+
+    <!-- 頂部手寫體標題（仿韓系文創展覽大螢幕視覺） -->
+    <header class="fixed top-4 sm:top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center w-[90%] max-w-2xl">
+        <h1 class="font-script text-3xl sm:text-5xl md:text-6xl text-[#faf4e6] leading-tight select-none">
+            Merry Christmas
+        </h1>
+        <p id="subTitle" class="hidden mt-1 inline-block px-4 py-0.5 rounded-full bg-[#092923]/65 border border-[#f3ca5f]/35 text-xs sm:text-sm font-bold text-[#f3ca5f] tracking-wider shadow-md"></p>
+    </header>
+
+    <!-- 聚焦展演時的作者與祝福標籤（逐筆重播時浮現在作品下方） -->
+    <div id="spotlightBadge" class="fixed left-1/2 -translate-x-1/2 z-10 pointer-events-none transition-all duration-500 opacity-0 translate-y-4" style="bottom: 15%;">
+        <div class="pine-glass rounded-full px-5 py-2 flex items-center gap-2.5 text-sm sm:text-base font-bold text-[#faf4e6] shadow-xl">
+            <span id="badgeIcon" class="text-lg">✨</span>
+            <span id="badgeText">Merry Christmas!</span>
+        </div>
+    </div>
+
+    <!-- 右上角精簡工具按鈕（音樂 / 展覽模式 / 教師雲端後台） -->
+    <div class="fixed top-4 right-4 z-20 flex items-center gap-2">
+        <button id="musicBtn" title="Play or pause Christmas music" class="btn-pill pine-glass w-11 h-11 rounded-full flex items-center justify-center text-lg text-[#faf4e6]">
+            <span id="musicIcon">🔇</span>
+        </button>
+        <button id="toggleUiBtn" title="Hide or show exhibition controls" class="btn-pill pine-glass w-11 h-11 rounded-full flex items-center justify-center text-lg text-[#faf4e6]">
+            <span id="toggleUiIcon">👁️</span>
+        </button>
+        <button id="adminBtn" title="Teacher dashboard" class="relative btn-pill pine-glass w-11 h-11 rounded-full flex items-center justify-center text-lg text-[#faf4e6]">
+            <span>⚙️</span>
+            <!-- 待審核作品紅點提示 -->
+            <span id="pendingBadgeDot" class="hidden absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[#DE4753] text-white text-[10px] font-black flex items-center justify-center shadow-md border border-[#0e3a32]">0</span>
+        </button>
+    </div>
+
+    <!-- 左上角連線狀態與作品數量徽章 -->
+    <div id="countBadge" class="fixed top-4 left-4 z-20 pine-glass rounded-full px-3.5 py-2 hidden sm:flex items-center gap-2.5 text-xs font-bold text-[#faf4e6]/90 transition-opacity duration-300">
+        <span id="cloudStatusDot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" title="Cloud connection status"></span>
+        <span>🎄 Artworks: <strong id="artworkCount" class="text-[#f3ca5f] text-sm">0</strong></span>
+    </div>
+
+    <!-- 底部控制列：畫一個送上去 / 換下一個重播 / 自動輪播 -->
+    <div id="bottomDock" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 sm:gap-3 transition-all duration-300">
+        <button id="openStudioBtn" class="btn-pill px-5 sm:px-6 py-3 rounded-full bg-gradient-to-r from-[#f3ca5f] to-[#f8d777] text-[#0e3a32] font-black text-sm sm:text-base shadow-xl shadow-black/30 flex items-center gap-2 whitespace-nowrap">
+            <span class="text-lg">🖍️</span>
+            <span>Create a Decoration!</span>
+        </button>
+        <button id="nextShowBtn" title="Show the next artwork" class="btn-pill pine-glass px-4 py-3 rounded-full text-[#faf4e6] font-bold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap">
+            <span>✨</span>
+            <span class="hidden sm:inline">Next Art</span>
+        </button>
+        <button id="loopToggleBtn" title="Play or pause the artwork slideshow" class="btn-pill pine-glass px-3.5 py-3 rounded-full text-[#f3ca5f] font-bold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap">
+            <span id="loopIcon">🔁</span>
+            <span id="loopLabel" class="hidden sm:inline">Auto Play</span>
+        </button>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 🖍️ 現場手繪創作室（平板 / 手機塗鴉模式） -->
+    <!-- ========================================== -->
+    <div id="studioModal" class="fixed inset-0 z-30 hidden items-center justify-center p-3 sm:p-5 bg-black/65 backdrop-blur-md">
+        <div class="modal-animate relative w-full max-w-md bg-[#11443a] border-2 border-[#faf4e6]/25 rounded-[2rem] shadow-2xl p-4 sm:p-5 flex flex-col gap-3.5 max-h-[95vh] overflow-y-auto no-scrollbar">
+
+            <!-- 標題列 -->
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="text-xl">🎨</span>
+                    <div>
+                        <h2 class="text-base sm:text-lg font-black text-[#faf4e6] leading-tight">Decorate Your Christmas Ornament!</h2>
+                        <p class="text-[11px] text-[#faf4e6]/65">Choose a shape and color, then add your own designs!</p>
+                    </div>
+                </div>
+                <button id="closeStudioBtn" class="btn-pill w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#faf4e6] font-bold">✕</button>
+            </div>
+
+            <!-- 1. 造型選擇列（8 種手繪聖誕造型） -->
+            <div id="shapePicker" class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+                <!-- 由 JS 動態產生 -->
+            </div>
+
+            <!-- 2. 互動塗鴉畫布容器 -->
+            <div class="relative w-full aspect-square max-h-[42vh] mx-auto rounded-[1.75rem] bg-[#0b312a] border-2 border-[#faf4e6]/15 overflow-hidden shadow-inner flex items-center justify-center">
+                <canvas id="drawCanvas"></canvas>
+                <!-- 畫布內浮動小工具（復原 / 清空） -->
+                <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+                    <button id="undoStrokeBtn" title="Undo the last stroke" class="btn-pill px-2.5 py-1.5 rounded-xl bg-[#11443a]/90 border border-white/15 text-xs font-bold text-[#faf4e6]">↩️ Undo</button>
+                    <button id="clearStrokeBtn" title="Clear all strokes" class="btn-pill px-2.5 py-1.5 rounded-xl bg-[#11443a]/90 border border-white/15 text-xs font-bold text-[#ff9aa2]">🧹 Clear</button>
+                </div>
+                <p id="drawHint" class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 text-[11px] font-bold text-[#faf4e6]/55 bg-[#0e3a32]/75 px-3 py-1 rounded-full whitespace-nowrap">
+                    ✏️ Draw patterns with your finger or mouse
+                </p>
+            </div>
+
+            <!-- 3. 底色與筆觸粗細列 -->
+            <div class="flex items-center justify-between gap-2 bg-[#0c332c] px-3.5 py-2.5 rounded-2xl border border-white/10">
+                <div id="colorPicker" class="flex items-center gap-2.5">
+                    <!-- 由 JS 動態產生 4 種韓系霧面撞色 -->
+                </div>
+                <div class="h-6 w-[1px] bg-white/15"></div>
+                <div id="brushPicker" class="flex items-center gap-1.5">
+                    <button data-width="4" title="Thin brush" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
+                        <span class="w-1.5 h-1.5 rounded-full bg-[#faf4e6]"></span>
+                    </button>
+                    <button data-width="7" title="Medium brush" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-[#f3ca5f] ring-2 ring-[#faf4e6]">
+                        <span class="w-2.5 h-2.5 rounded-full bg-[#0e3a32]"></span>
+                    </button>
+                    <button data-width="11" title="Thick brush" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
+                        <span class="w-3.5 h-3.5 rounded-full bg-[#faf4e6]"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 4. 作者署名 / 祝福語 -->
+            <input id="authorInput" type="text" maxlength="20" placeholder="Your name (optional)"
+                class="w-full px-4 py-2.5 rounded-2xl bg-[#0c332c] border border-white/15 text-sm text-[#faf4e6] placeholder-[#faf4e6]/45 focus:outline-none focus:border-[#f3ca5f]">
+
+            <!-- 5. 送出按鈕 -->
+            <button id="submitArtBtn" class="btn-pill w-full py-3.5 rounded-2xl font-black text-base text-[#0e3a32] bg-gradient-to-r from-[#f3ca5f] to-[#f8d777] shadow-lg shadow-amber-400/20 flex items-center justify-center gap-2">
+                <span id="submitArtBtnText">✨ Submit My Decoration</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 📱 學生獨立掃碼模式：送出成功／暫停畫畫提示遮罩 -->
+    <!-- ========================================== -->
+    <div id="studentStatusModal" class="fixed inset-0 z-50 hidden items-center justify-center p-5 bg-[#0e3a32]/95 backdrop-blur-md">
+        <div class="modal-animate w-full max-w-sm bg-[#11443a] border-2 border-[#faf4e6]/20 rounded-[2rem] p-6 text-center flex flex-col items-center gap-4 shadow-2xl">
+            <div id="studentStatusIcon" class="text-5xl">🎉</div>
+            <h2 id="studentStatusTitle" class="text-xl font-black text-[#faf4e6]">Great Job!</h2>
+            <p id="studentStatusDesc" class="text-sm text-[#faf4e6]/80 leading-relaxed">Your Christmas decoration has been submitted!</p>
+            <div class="flex flex-col gap-2.5 w-full pt-2">
+                <button id="studentDrawAgainBtn" class="btn-pill w-full py-3 rounded-2xl font-black text-sm text-[#0e3a32] bg-[#f3ca5f] hover:bg-[#f7d678]">
+                    🖍️ Draw Another!
+                </button>
+                <button id="studentViewWallBtn" class="btn-pill w-full py-2.5 rounded-2xl font-bold text-xs text-[#faf4e6] bg-white/10 hover:bg-white/20">
+                    🎄 View the Art Wall
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 👩‍🏫 教師雲端審核與多裝置管理後台彈窗 -->
+    <!-- ========================================== -->
+    <div id="adminModal" class="fixed inset-0 z-40 hidden items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm">
+        <div class="modal-animate relative w-full max-w-xl bg-[#11443a] border-2 border-[#faf4e6]/20 rounded-[2rem] shadow-2xl p-5 flex flex-col gap-4 max-h-[92vh] overflow-y-auto no-scrollbar">
+
+            <!-- 頂部標題列 -->
+            <div class="flex items-center justify-between border-b border-white/10 pb-3">
+                <div class="flex items-center gap-2.5">
+                    <span class="text-2xl">👩‍🏫</span>
+                    <div>
+                        <h2 class="text-lg font-black text-[#faf4e6] leading-tight">教師雲端審核後台</h2>
+                        <p id="cloudStatusLabel" class="text-[11px] text-[#f3ca5f] font-bold">🔄 正在建立多裝置雲端連線...</p>
+                    </div>
+                </div>
+                <button id="closeAdminBtn" class="btn-pill w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#faf4e6] font-bold">✕</button>
+            </div>
+
+            <!-- 步驟 1：防誤觸密碼鎖畫面 -->
+            <div id="adminPinView" class="flex flex-col items-center gap-4 py-4">
+                <div class="w-14 h-14 rounded-2xl bg-[#0c332c] border border-[#f3ca5f]/30 flex items-center justify-center text-3xl shadow-inner">🔐</div>
+                <div class="text-center">
+                    <p class="text-sm font-bold text-[#faf4e6]">請輸入教師管理密碼</p>
+                    <p class="text-xs text-[#faf4e6]/55 mt-1">僅供單機預覽；正式雲端教師後台使用 Google 帳號驗證。</p>
+                </div>
+                <div class="flex items-center gap-2 w-full max-w-[240px]">
+                    <input id="adminPinInput" type="password" inputmode="numeric" maxlength="6" placeholder="教師預覽密碼"
+                        class="w-full px-4 py-2.5 rounded-2xl bg-[#0c332c] border border-[#faf4e6]/25 text-center text-lg tracking-[0.4em] font-black text-[#faf4e6] placeholder-[#faf4e6]/30 focus:outline-none focus:border-[#f3ca5f]">
+                </div>
+                <button id="unlockAdminBtn" class="btn-pill w-full max-w-[240px] py-3 rounded-2xl font-black text-sm text-[#0e3a32] bg-[#f3ca5f] hover:bg-[#f7d678]">
+                    解鎖進入雲端後台
+                </button>
+            </div>
+
+            <!-- 正式雲端教師登入：採 Firebase Google Auth 與後端權限規則，不靠公開的前端密碼。 -->
+            <div id="teacherAuthView" class="hidden flex-col items-center gap-3 py-4 text-center">
+                <div class="w-14 h-14 rounded-2xl bg-[#0c332c] border border-[#f3ca5f]/30 flex items-center justify-center text-3xl">🔐</div>
+                <p class="text-sm font-bold text-[#faf4e6]">使用教師 Google 帳號登入</p>
+                <p class="text-xs text-[#faf4e6]/65">登入後才能查看待審核作品、放行與調整上牆模式。</p>
+                <button id="teacherGoogleSignInBtn" class="btn-pill py-3 px-5 rounded-2xl bg-[#f3ca5f] text-[#0e3a32] text-sm font-black">使用 Google 登入教師後台</button>
+            </div>
+
+            <!-- 步驟 2：後台主控面板（分頁式設計：待審核 / 已上牆 / 同步設定） -->
+            <div id="adminDashView" class="hidden flex-col gap-3.5">
+
+                <!-- 裝置識別碼與即時連線資訊 -->
+                <div class="flex flex-wrap items-center justify-between gap-2 bg-[#0c332c] px-3.5 py-2 rounded-xl border border-white/10 text-[11px]">
+                    <span class="text-[#faf4e6]/75">裝置 ID：<code id="adminUserIdDisplay" class="text-[#f3ca5f] font-mono break-all">連線中...</code></span>
+                    <button id="copyStudentLinkBtn" class="btn-pill px-2.5 py-1 rounded-lg bg-[#5BA383]/30 hover:bg-[#5BA383]/50 border border-[#5BA383]/50 text-[#faf4e6] font-bold">
+                        🔗 複製學生畫畫連結
+                    </button>
+                </div>
+
+                <!-- 後台三大分頁切換 -->
+                <div class="grid grid-cols-3 gap-1.5 bg-[#0c332c] p-1 rounded-2xl border border-white/10">
+                    <button data-tab="pending" class="admin-tab-btn py-2 rounded-xl text-xs font-black bg-[#f3ca5f] text-[#0e3a32] flex items-center justify-center gap-1.5">
+                        <span>⏳ 待審核</span>
+                        <span id="tabPendingCount" class="px-1.5 py-0.5 rounded-full bg-[#DE4753] text-white text-[10px]">0</span>
+                    </button>
+                    <button data-tab="approved" class="admin-tab-btn py-2 rounded-xl text-xs font-bold text-[#faf4e6]/80 hover:bg-white/10 flex items-center justify-center gap-1.5">
+                        <span>🖼️ 已上牆</span>
+                        <span id="tabApprovedCount" class="px-1.5 py-0.5 rounded-full bg-white/15 text-[#faf4e6] text-[10px]">0</span>
+                    </button>
+                    <button data-tab="settings" class="admin-tab-btn py-2 rounded-xl text-xs font-bold text-[#faf4e6]/80 hover:bg-white/10">
+                        🏫 同步設定
+                    </button>
+                </div>
+
+                <!-- 分頁 1：待審核作品區 -->
+                <div id="tabPanelPending" class="bg-[#0c332c] rounded-2xl p-3.5 border border-white/10 flex flex-col gap-3">
+                    <div class="flex items-center justify-between">
+                        <p class="text-xs font-bold text-[#faf4e6]/85">學生送出的新作品會先停留在這裡等待放行</p>
+                        <button id="approveAllBtn" class="btn-pill px-2.5 py-1 rounded-lg bg-[#5BA383] hover:bg-[#6ab896] text-[#0e3a32] text-[11px] font-black shrink-0">
+                            ✅ 全部放行
+                        </button>
+                    </div>
+                    <div id="adminPendingList" class="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
+                        <!-- 由 JS 動態產生待審核作品 -->
+                    </div>
+                </div>
+
+                <!-- 分頁 2：已上牆作品管理（支援遠端點播大螢幕播映與刪除） -->
+                <div id="tabPanelApproved" class="hidden bg-[#0c332c] rounded-2xl p-3.5 border border-white/10 flex-col gap-3">
+                    <div class="flex items-center justify-between">
+                        <p class="text-xs font-bold text-[#faf4e6]/85">點「✨ 播映」可立刻遙控大螢幕放大重播！</p>
+                        <button id="clearAllStudentBtn" class="btn-pill px-2.5 py-1 rounded-lg bg-[#DE4753]/20 hover:bg-[#DE4753]/35 border border-[#DE4753]/40 text-[11px] font-bold text-[#ff9aa2] shrink-0">
+                            🗑️ 清空雲端作品
+                        </button>
+                    </div>
+                    <div id="adminArtList" class="flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
+                        <!-- 由 JS 動態產生已上牆作品 -->
+                    </div>
+                </div>
+
+                <!-- 分頁 3：多裝置同步設定 -->
+                <div id="tabPanelSettings" class="hidden bg-[#0c332c] rounded-2xl p-4 border border-white/10 flex-col gap-3">
+                    <!-- 班級副標題設定 -->
+                    <div class="flex gap-2">
+                        <input id="classSubtitleInput" type="text" maxlength="28" placeholder="英文班級標題（例：Paiyun Christmas Art Wall）"
+                            class="flex-1 px-3.5 py-2 rounded-xl bg-[#11443a] border border-white/15 text-xs sm:text-sm text-[#faf4e6] placeholder-[#faf4e6]/40 focus:outline-none focus:border-[#f3ca5f]">
+                        <button id="saveSubtitleBtn" class="btn-pill px-3.5 py-2 rounded-xl bg-[#f3ca5f] text-[#0e3a32] text-xs font-black shrink-0">同步套用</button>
+                    </div>
+
+                    <!-- 核心雲端審核與權限開關 -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                        <div class="bg-[#11443a] px-3.5 py-3 rounded-xl border border-[#f3ca5f]/35 sm:col-span-2">
+                            <p class="text-xs font-black text-[#f3ca5f] mb-2">🛡️ 作品發布模式（教師專用）</p>
+                            <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="作品發布模式">
+                                <label id="reviewModeLabel" class="cursor-pointer rounded-xl border-2 border-white/15 bg-[#0c332c] p-2.5 flex gap-2 items-start">
+                                    <input id="approvalModeReview" type="radio" name="approvalMode" value="review" class="accent-[#f3ca5f] mt-0.5 shrink-0">
+                                    <span><strong class="block text-xs text-[#faf4e6]">A｜教師審核</strong><small class="block text-[10px] text-[#faf4e6]/65 mt-1 leading-relaxed">即時收到作品，老師放行後上牆</small></span>
+                                </label>
+                                <label id="autoModeLabel" class="cursor-pointer rounded-xl border-2 border-[#f3ca5f] bg-[#f3ca5f]/15 p-2.5 flex gap-2 items-start">
+                                    <input id="approvalModeAuto" type="radio" name="approvalMode" value="auto" checked class="accent-[#f3ca5f] mt-0.5 shrink-0">
+                                    <span><strong class="block text-xs text-[#faf4e6]">B｜自動放行</strong><small class="block text-[10px] text-[#faf4e6]/65 mt-1 leading-relaxed">學生送出後立即加入展示牆</small></span>
+                                </label>
+                            </div>
+                            <p id="approvalModeNote" class="text-[10px] text-[#faf4e6]/65 mt-2">目前：全部自動放行</p>
+                        </div>
+                        <label class="flex items-center justify-between bg-[#11443a] px-3.5 py-2.5 rounded-xl border border-white/10 cursor-pointer">
+                            <span class="text-xs font-bold text-[#faf4e6]">🖍️ 開放學生畫畫</span>
+                            <input id="toggleAllowDraw" type="checkbox" checked class="w-4 h-4 accent-[#f3ca5f] cursor-pointer">
+                        </label>
+                        <label class="flex items-center justify-between bg-[#11443a] px-3.5 py-2.5 rounded-xl border border-white/10 cursor-pointer">
+                            <span class="text-xs font-bold text-[#faf4e6]">✨ 顯示內建範例圖</span>
+                            <input id="toggleShowPresets" type="checkbox" checked class="w-4 h-4 accent-[#f3ca5f] cursor-pointer">
+                        </label>
+                    </div>
+
+                    <!-- 輪播速度調整 -->
+                    <div class="flex items-center justify-between bg-[#11443a] px-3.5 py-2 rounded-xl border border-white/10">
+                        <span class="text-xs font-bold text-[#faf4e6]">⏱️ 逐筆重播速度（同步所有螢幕）</span>
+                        <div class="flex items-center gap-1.5">
+                            <button data-speed="0.7" class="speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white/10 text-[#faf4e6]/80">慢速</button>
+                            <button data-speed="1" class="speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#f3ca5f] text-[#0e3a32]">標準</button>
+                            <button data-speed="1.5" class="speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white/10 text-[#faf4e6]/80">快速</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 底部快捷動作：下載合照 / 鎖定後台 -->
+                <div class="flex items-center gap-2.5">
+                    <button id="downloadSnapshotBtn" class="btn-pill flex-1 py-3 rounded-2xl font-black text-sm text-[#0e3a32] bg-gradient-to-r from-[#f3ca5f] to-[#f8d777] flex items-center justify-center gap-2 shadow-lg">
+                        <span>📸 下載全班聖誕牆合照 (.png)</span>
+                    </button>
+                    <button id="lockAdminBtn" title="重新鎖定後台" class="btn-pill px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20 text-xs font-bold text-[#faf4e6]">
+                        🔒 鎖定
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 學生觀看全班作品後，可直接返回塗鴉，不顯示教師工具列 -->
+    <button id="studentReturnToStudioBtn" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-20 btn-pill px-6 py-3 rounded-full bg-[#f3ca5f] text-[#0e3a32] font-black shadow-xl">🖍️ Draw Another Decoration</button>
+
+    <!-- 輕提示訊息容器（取代 alert） -->
+    <div id="toastBox" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-2">
+        <div id="toastMsg" class="pine-glass rounded-full px-5 py-2.5 text-sm font-bold text-[#f3ca5f] shadow-xl"></div>
+    </div>
+
+    <script type="module">
+        /**
+         * ============================================================
+         * 🎄 Merry Christmas 手繪互動塗鴉牆 - 完整互動與雲端審核引擎
+         * ============================================================
+         * 1. 韓系文創插畫視覺：深松綠紙紋背景 ＋ 4 種霧面撞色 ＋ 奶油白手繪線條。
+         * 2. 群眾散開 ＋ 中央逐筆重播循環秀：自動無限循環，點擊牆上任一掛飾也能立刻重播。
+         * 3. 現場手繪創作室：支援觸控筆、手指與滑鼠，即時裁切在掛飾輪廓內繪畫。
+         * 4. 多裝置雲端即時同步 ＋ 教師審核後台：動態載入 Firebase，無金鑰時自動無縫降級為單機模式。
+         */
+
+        // --- 韓系文創配色盤 ---
+        const BG_COLOR = '#0e3a32';
+        const STROKE_COLOR = '#faf4e6';
+        const PALETTE = [
+            { name: 'Berry Red', hex: '#DE4753' },
+            { name: 'Cream Yellow', hex: '#E8BE52' },
+            { name: 'Sage Green', hex: '#5BA383' },
+            { name: 'Peach Pink', hex: '#EE7989' }
+        ];
+
+        // --- 8 種手繪感聖誕造型 ---
+        const SHAPES = [
+            { id: 'stocking', label: 'Stocking', icon: '🧦' },
+            { id: 'tree', label: 'Christmas Tree', icon: '🎄' },
+            { id: 'bauble', label: 'Ornament', icon: '🔮' },
+            { id: 'candycane', label: 'Candy Cane', icon: '🍬' },
+            { id: 'snowman', label: 'Snowman', icon: '⛄' },
+            { id: 'gingerbread', label: 'Gingerbread Man', icon: '🍪' },
+            { id: 'reindeer', label: 'Reindeer', icon: '🦌' },
+            { id: 'face', label: 'Smiley Face', icon: '😊' }
+        ];
+
+        // --- 內建精選插畫牆（共 18 件，開場畫面即如展覽牆般豐富） ---
+        const PRESET_GALLERY = [
+            { shape: 'stocking', color: '#E8BE52', variant: 0, author: '🧦 Warm Wishes' },
+            { shape: 'tree', color: '#DE4753', variant: 0, author: '🎄 Make a Wish' },
+            { shape: 'bauble', color: '#5BA383', variant: 0, author: '✨ You Are Amazing' },
+            { shape: 'candycane', color: '#EE7989', variant: 0, author: '🍬 Sweet Christmas' },
+            { shape: 'snowman', color: '#5BA383', variant: 0, author: '⛄ Snowy Smiles' },
+            { shape: 'gingerbread', color: '#E8BE52', variant: 0, author: '🍪 Peace and Joy' },
+            { shape: 'reindeer', color: '#DE4753', variant: 0, author: '🦌 Rudolph Says Hello' },
+            { shape: 'face', color: '#EE7989', variant: 0, author: '😊 Keep Smiling' },
+            { shape: 'tree', color: '#E8BE52', variant: 1, author: '⭐ Merry Christmas' },
+            { shape: 'stocking', color: '#5BA383', variant: 1, author: '🎁 A Gift for You' },
+            { shape: 'bauble', color: '#DE4753', variant: 1, author: '🔔 Jingle Bells' },
+            { shape: 'snowman', color: '#EE7989', variant: 1, author: '❄️ Let It Snow' },
+            { shape: 'candycane', color: '#DE4753', variant: 1, author: '🍭 Candy Cane Fun' },
+            { shape: 'face', color: '#E8BE52', variant: 1, author: '🌟 Best Friends Forever' },
+            { shape: 'bauble', color: '#E8BE52', variant: 0, author: '💛 Thank You' },
+            { shape: 'tree', color: '#5BA383', variant: 0, author: '🌲 Love Our Planet' },
+            { shape: 'gingerbread', color: '#DE4753', variant: 0, author: '❤️ Christmas Cheer' },
+            { shape: 'stocking', color: '#EE7989', variant: 0, author: '🎀 Stocking Surprise' }
+        ];
+
+        // --- 主畫布與狀態變數 ---
+        const wallCanvas = document.getElementById('wallCanvas');
+        const ctx = wallCanvas.getContext('2d');
+        let wallW = window.innerWidth;
+        let wallH = window.innerHeight;
+        let dpr = Math.min(window.devicePixelRatio || 1, 2);
+        let paperPatternCanvas = null;
+
+        let nextOrnId = 1;
+        let ornaments = [];
+        let snowFlakes = [];
+        let sparkles = [];
+        let lastFrameTime = performance.now();
+
+        // 聚焦輪播狀態機（重現影片 00:09 - 00:26 的招牌視覺！）
+        const showcase = {
+            state: 'IDLE', // IDLE | ENTERING | REPLAYING | HOLDING | EXITING
+            targetId: null,
+            timer: 1.8,
+            progress: 0,
+            replayPointsDrawn: 0,
+            totalPoints: 0
+        };
+
+        let autoLoopEnabled = true;
+        let showcaseQueueIdx = 0;
+        let showPresets = true;
+        let allowDrawing = true;
+        let requireApproval = false; // Default: auto-approve all new submissions; cloud teacher settings can override.
+        let showcaseSpeedMultiplier = 1;
+        let isStudioOpen = false;
+        let isAdminOpen = false;
+        let adminUnlocked = false;
+        let activeAdminTab = 'pending';
+        let uiHidden = false;
+        const ADMIN_PIN = '1225';
+
+        // --- 雲端多裝置連線狀態 ---
+        let fbModules = null;
+        let db = null;
+        let auth = null;
+        let currentUser = null;
+        let cloudReady = false;
+        let cloudArtworks = [];
+        let knownApprovedIds = new Set();
+        let initialCloudSynced = false;
+        let lastFeaturedTimestamp = 0;
+        const wallConfig = window.CHRISTMAS_WALL_CONFIG || {};
+        const appId = wallConfig.wallId || (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
+        const TEACHER_EMAIL = (wallConfig.teacherEmail || '').trim().toLowerCase();
+        const isStudentDrawMode = new URLSearchParams(window.location.search).get('mode') === 'draw';
+        let cloudSettingsLoaded = false;
+        let unsubscribeArtworks = null;
+        let unsubscribeSettings = null;
+        function isTrustedTeacher(user) {
+            return !!(TEACHER_EMAIL && user && user.email &&
+                user.email.toLowerCase() === TEACHER_EMAIL && user.emailVerified);
+        }
+
+        // --- 柔和紙紋背景產生器（提升文創插畫質感） ---
+        function createPaperGrain() {
+            const c = document.createElement('canvas');
+            c.width = 160;
+            c.height = 160;
+            const g = c.getContext('2d');
+            g.fillStyle = BG_COLOR;
+            g.fillRect(0, 0, 160, 160);
+            for (let i = 0; i < 650; i++) {
+                const x = Math.random() * 160;
+                const y = Math.random() * 160;
+                const a = Math.random() * 0.045;
+                g.fillStyle = Math.random() > 0.5 ? `rgba(250,244,230,${a})` : `rgba(0,0,0,${a * 1.4})`;
+                g.fillRect(x, y, 1.5, 1.5);
+            }
+            paperPatternCanvas = c;
+        }
+
+        // ============================================================
+        // 🎨 8 種圓潤手繪聖誕掛飾向量路徑（座標範圍 -100 ~ +100）
+        // ============================================================
+        function traceShapePath(c, shape) {
+            c.beginPath();
+            switch (shape) {
+                case 'stocking': {
+                    // 圓潤可愛聖誕襪
+                    c.moveTo(-26, -86);
+                    c.quadraticCurveTo(8, -90, 38, -82);
+                    c.quadraticCurveTo(46, -80, 44, -66);
+                    c.lineTo(36, 10);
+                    c.bezierCurveTo(36, 56, 12, 86, -24, 88);
+                    c.bezierCurveTo(-66, 90, -78, 56, -64, 34);
+                    c.bezierCurveTo(-54, 18, -32, 16, -24, 10);
+                    c.lineTo(-32, -70);
+                    c.quadraticCurveTo(-34, -84, -26, -86);
+                    c.closePath();
+                    break;
+                }
+                case 'tree': {
+                    // 三層蓬鬆手繪聖誕樹
+                    c.moveTo(0, -90);
+                    c.quadraticCurveTo(22, -52, 42, -32);
+                    c.quadraticCurveTo(48, -24, 24, -22);
+                    c.quadraticCurveTo(48, 2, 66, 22);
+                    c.quadraticCurveTo(72, 32, 42, 32);
+                    c.quadraticCurveTo(64, 54, 78, 74);
+                    c.quadraticCurveTo(82, 84, 56, 84);
+                    c.lineTo(18, 84);
+                    c.lineTo(18, 95);
+                    c.quadraticCurveTo(0, 98, -18, 95);
+                    c.lineTo(-18, 84);
+                    c.lineTo(-56, 84);
+                    c.quadraticCurveTo(-82, 84, -78, 74);
+                    c.quadraticCurveTo(-64, 54, -42, 32);
+                    c.quadraticCurveTo(-72, 32, -66, 22);
+                    c.quadraticCurveTo(-48, 2, -24, -22);
+                    c.quadraticCurveTo(-48, -24, -42, -32);
+                    c.quadraticCurveTo(-22, -52, 0, -90);
+                    c.closePath();
+                    break;
+                }
+                case 'bauble': {
+                    // 圓滾滾聖誕吊球＋頂部小掛頭
+                    c.moveTo(-18, -76);
+                    c.quadraticCurveTo(0, -92, 18, -76);
+                    c.lineTo(20, -60);
+                    c.bezierCurveTo(68, -52, 86, -12, 80, 30);
+                    c.bezierCurveTo(74, 72, 38, 92, 0, 92);
+                    c.bezierCurveTo(-38, 92, -74, 72, -80, 30);
+                    c.bezierCurveTo(-86, -12, -68, -52, -20, -60);
+                    c.closePath();
+                    break;
+                }
+                case 'candycane': {
+                    // 粗胖可愛拐杖糖
+                    c.moveTo(-54, -18);
+                    c.bezierCurveTo(-66, -64, -24, -96, 18, -86);
+                    c.bezierCurveTo(54, -76, 62, -34, 48, 8);
+                    c.lineTo(28, 78);
+                    c.bezierCurveTo(22, 96, -8, 92, -2, 72);
+                    c.lineTo(16, 4);
+                    c.bezierCurveTo(24, -26, 16, -48, -2, -50);
+                    c.bezierCurveTo(-18, -52, -26, -34, -22, -18);
+                    c.bezierCurveTo(-18, -2, -48, 4, -54, -18);
+                    c.closePath();
+                    break;
+                }
+                case 'snowman': {
+                    // 雙球圓滾滾小雪人
+                    c.moveTo(0, -86);
+                    c.bezierCurveTo(36, -86, 52, -60, 44, -32);
+                    c.quadraticCurveTo(38, -16, 26, -10);
+                    c.bezierCurveTo(66, -2, 78, 36, 64, 66);
+                    c.bezierCurveTo(52, 88, 26, 94, 0, 94);
+                    c.bezierCurveTo(-26, 94, -52, 88, -64, 66);
+                    c.bezierCurveTo(-78, 36, -66, -2, -26, -10);
+                    c.quadraticCurveTo(-38, -16, -44, -32);
+                    c.bezierCurveTo(-52, -60, -36, -86, 0, -86);
+                    c.closePath();
+                    break;
+                }
+                case 'gingerbread': {
+                    // 胖胖薑餅人
+                    c.moveTo(0, -86);
+                    c.bezierCurveTo(30, -86, 44, -64, 38, -42);
+                    c.quadraticCurveTo(34, -28, 22, -22);
+                    c.lineTo(68, -16);
+                    c.bezierCurveTo(86, -12, 84, 16, 64, 16);
+                    c.lineTo(34, 14);
+                    c.lineTo(48, 72);
+                    c.bezierCurveTo(52, 92, 22, 96, 14, 78);
+                    c.lineTo(0, 46);
+                    c.lineTo(-14, 78);
+                    c.bezierCurveTo(-22, 96, -52, 92, -48, 72);
+                    c.lineTo(-34, 14);
+                    c.lineTo(-64, 16);
+                    c.bezierCurveTo(-84, 16, -86, -12, -68, -16);
+                    c.lineTo(-22, -22);
+                    c.quadraticCurveTo(-34, -28, -38, -42);
+                    c.bezierCurveTo(-44, -64, -30, -86, 0, -86);
+                    c.closePath();
+                    break;
+                }
+                case 'reindeer': {
+                    // 可愛小麋鹿大頭（含圓潤鹿角與耳朵）
+                    c.moveTo(0, -48);
+                    c.quadraticCurveTo(22, -52, 34, -84);
+                    c.quadraticCurveTo(44, -92, 48, -76);
+                    c.quadraticCurveTo(44, -56, 36, -42);
+                    c.quadraticCurveTo(70, -44, 76, -24);
+                    c.quadraticCurveTo(72, -6, 52, -6);
+                    c.bezierCurveTo(68, 26, 56, 76, 0, 86);
+                    c.bezierCurveTo(-56, 76, -68, 26, -52, -6);
+                    c.quadraticCurveTo(-72, -6, -76, -24);
+                    c.quadraticCurveTo(-70, -44, -36, -42);
+                    c.quadraticCurveTo(-44, -56, -48, -76);
+                    c.quadraticCurveTo(-44, -92, -34, -84);
+                    c.quadraticCurveTo(-22, -52, 0, -48);
+                    c.closePath();
+                    break;
+                }
+                case 'face':
+                default: {
+                    // 影片 00:01 同款可愛圓臉頭像（帶蓬鬆頭髮與小耳朵）
+                    c.moveTo(0, -84);
+                    c.bezierCurveTo(46, -86, 74, -54, 70, -10);
+                    c.quadraticCurveTo(84, -4, 80, 14);
+                    c.quadraticCurveTo(74, 28, 62, 26);
+                    c.bezierCurveTo(54, 66, 30, 86, 0, 86);
+                    c.bezierCurveTo(-30, 86, -54, 66, -62, 26);
+                    c.quadraticCurveTo(-74, 28, -80, 14);
+                    c.quadraticCurveTo(-84, -4, -70, -10);
+                    c.bezierCurveTo(-74, -54, -46, -86, 0, -84);
+                    c.closePath();
+                    break;
+                }
+            }
+        }
+
+        // ============================================================
+        // ✏️ 內建插畫筆畫產生器（讓預設作品都像手繪藝術家親筆畫的！）
+        // ============================================================
+        function sampleWave(x1, y1, x2, y2, amp, waves, steps = 22) {
+            const pts = [];
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const bx = x1 + (x2 - x1) * t;
+                const by = y1 + (y2 - y1) * t;
+                const ang = Math.atan2(y2 - y1, x2 - x1) + Math.PI / 2;
+                const off = Math.sin(t * Math.PI * 2 * waves) * amp;
+                pts.push({ x: bx + Math.cos(ang) * off, y: by + Math.sin(ang) * off });
+            }
+            return pts;
+        }
+
+        function sampleArc(cx, cy, rx, ry, a1, a2, steps = 16) {
+            const pts = [];
+            for (let i = 0; i <= steps; i++) {
+                const a = a1 + (a2 - a1) * (i / steps);
+                pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
+            }
+            return pts;
+        }
+
+        function sampleStar(cx, cy, r, steps = 10) {
+            const pts = [];
+            for (let i = 0; i <= steps; i++) {
+                const rad = i % 2 === 0 ? r : r * 0.45;
+                const a = -Math.PI / 2 + (i * Math.PI * 2) / steps;
+                pts.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad });
+            }
+            return pts;
+        }
+
+        function buildPresetStrokes(shape, variant = 0) {
+            const strokes = [];
+            const add = (points, width = 6.5) => strokes.push({ width, points });
+
+            if (shape === 'stocking') {
+                // 襪口蓬鬆毛邊波浪
+                add(sampleWave(-32, -62, 42, -56, 7, 3.5, 24), 7);
+                add(sampleWave(-30, -48, 40, -44, 4, 2.5, 18), 5.5);
+                if (variant === 0) {
+                    add(sampleWave(-24, -12, 34, -8, 6, 2, 18), 6);
+                    add(sampleStar(2, 22, 16), 5.5);
+                    add(sampleArc(-38, 52, 22, 24, -Math.PI * 0.7, Math.PI * 0.6, 14), 6.5);
+                } else {
+                    add([{ x: -24, y: -15 }, { x: 32, y: -15 }], 6);
+                    add([{ x: -22, y: 8 }, { x: 30, y: 8 }], 6);
+                    add(sampleArc(4, 34, 14, 14, 0, Math.PI * 1.9, 14), 6);
+                    add(sampleArc(-42, 54, 18, 20, -Math.PI * 0.6, Math.PI * 0.7, 12), 6);
+                }
+            } else if (shape === 'tree') {
+                // 頂端星星＋螺旋彩帶＋小圓點
+                add(sampleStar(0, -64, 14), 5.5);
+                add(sampleWave(-28, -26, 30, -14, 6, 2, 20), 6.5);
+                add(sampleWave(-46, 18, 48, 28, 7, 2.5, 22), 6.5);
+                add(sampleWave(-60, 58, 62, 66, 7, 3, 24), 6.5);
+                if (variant === 1) {
+                    add(sampleArc(-16, 2, 5, 5, 0, Math.PI * 2, 8), 6);
+                    add(sampleArc(18, 42, 5, 5, 0, Math.PI * 2, 8), 6);
+                    add(sampleArc(-26, 44, 5, 5, 0, Math.PI * 2, 8), 6);
+                }
+            } else if (shape === 'bauble') {
+                // 掛頭線＋中間花紋
+                add([{ x: -16, y: -62 }, { x: 16, y: -62 }], 6);
+                add(sampleWave(-68, 4, 68, 4, 10, 3, 26), 6.5);
+                if (variant === 0) {
+                    add(sampleWave(-64, 34, 64, 34, 6, 2.5, 22), 5.5);
+                    add(sampleStar(0, -24, 13), 5.5);
+                } else {
+                    add([{ x: -58, y: -22 }, { x: 58, y: -22 }], 6);
+                    add([{ x: -54, y: 38 }, { x: 54, y: 38 }], 6);
+                    add(sampleArc(-24, 58, 5, 5, 0, Math.PI * 2, 8), 6);
+                    add(sampleArc(24, 58, 5, 5, 0, Math.PI * 2, 8), 6);
+                }
+            } else if (shape === 'candycane') {
+                // 經典斜條紋與可愛蝴蝶結感點綴
+                add([{ x: -46, y: -36 }, { x: -20, y: -44 }], 7);
+                add([{ x: -18, y: -82 }, { x: -4, y: -52 }], 7);
+                add([{ x: 26, y: -74 }, { x: 16, y: -44 }], 7);
+                add([{ x: 22, y: -14 }, { x: 50, y: -6 }], 7);
+                add([{ x: 14, y: 18 }, { x: 42, y: 26 }], 7);
+                add([{ x: 6, y: 48 }, { x: 34, y: 56 }], 7);
+            } else if (shape === 'snowman') {
+                // 笑咪咪眼睛、胡蘿蔔鼻、圍巾、鈕扣
+                add(sampleArc(-14, -52, 4, 4, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(14, -52, 4, 4, 0, Math.PI * 2, 8), 6.5);
+                add([{ x: 0, y: -42 }, { x: 22, y: -36 }, { x: 0, y: -32 }], 6);
+                add(sampleArc(0, -34, 16, 11, 0.25, Math.PI - 0.25, 12), 5.5);
+                add(sampleWave(-32, -8, 32, -8, 4, 2, 16), 7.5);
+                add([{ x: 14, y: -4 }, { x: 24, y: 26 }], 7);
+                add(sampleArc(0, 32, 5, 5, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(0, 56, 5, 5, 0, Math.PI * 2, 8), 6.5);
+            } else if (shape === 'gingerbread') {
+                // 眼睛、大微笑、領結、鈕扣、手腳糖霜波浪
+                add(sampleArc(-14, -58, 4, 4, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(14, -58, 4, 4, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(0, -48, 16, 12, 0.2, Math.PI - 0.2, 12), 6);
+                add(sampleWave(-64, -8, -42, 12, 4, 1.5, 10), 5.5);
+                add(sampleWave(64, -8, 42, 12, 4, 1.5, 10), 5.5);
+                add(sampleArc(0, 4, 6, 6, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(0, 26, 6, 6, 0, Math.PI * 2, 8), 6.5);
+            } else if (shape === 'reindeer') {
+                // 鹿角紋路、眼睛、大圓鼻、微笑
+                add(sampleArc(-20, -4, 4.5, 4.5, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(20, -4, 4.5, 4.5, 0, Math.PI * 2, 8), 6.5);
+                add(sampleArc(0, 22, 14, 11, 0, Math.PI * 2, 14), 7);
+                add(sampleArc(0, 42, 20, 12, 0.2, Math.PI - 0.2, 12), 6);
+                add([{ x: -34, y: -64 }, { x: -46, y: -58 }], 5.5);
+                add([{ x: 34, y: -64 }, { x: 46, y: -58 }], 5.5);
+            } else {
+                // 可愛人臉：捲捲瀏海、笑眼、微笑、腮紅
+                add(sampleWave(-46, -54, 46, -54, 10, 3, 20), 6.5);
+                add(sampleArc(-22, -8, 8, 6, Math.PI, Math.PI * 2, 10), 6.5);
+                add(sampleArc(22, -8, 8, 6, Math.PI, Math.PI * 2, 10), 6.5);
+                add(sampleArc(0, 20, 20, 14, 0.15, Math.PI - 0.15, 14), 6.5);
+                add([{ x: -42, y: 12 }, { x: -34, y: 20 }], 5.5);
+                add([{ x: 34, y: 20 }, { x: 42, y: 12 }], 5.5);
+            }
+            return strokes;
+        }
+
+        // ============================================================
+        // ❄️ 物件建立與漂浮排斥物理引擎
+        // ============================================================
+        function createOrnamentObj(data, spawnFromBottom = false) {
+            const baseScale = Math.min(wallW, wallH) < 600 ? 0.34 : 0.44;
+            const scale = baseScale * (0.86 + Math.random() * 0.26);
+            const marginX = Math.max(65, wallW * 0.08);
+            const marginTop = Math.max(115, wallH * 0.15);
+            const marginBot = Math.max(95, wallH * 0.14);
+
+            const homeX = marginX + Math.random() * Math.max(40, wallW - marginX * 2);
+            const homeY = marginTop + Math.random() * Math.max(40, wallH - marginTop - marginBot);
+
+            const totalPts = (data.strokes || []).reduce((acc, s) => acc + (s.points ? s.points.length : 0), 0);
+
+            return {
+                id: nextOrnId++,
+                uid: data.uid || null,
+                shape: data.shape,
+                color: data.color,
+                strokes: data.strokes || [],
+                totalPoints: Math.max(1, totalPts),
+                author: data.author || '🎄 Merry Christmas!',
+                isUserCreated: Boolean(data.isUserCreated),
+                homeX,
+                homeY,
+                x: spawnFromBottom ? wallW * 0.5 : homeX,
+                y: spawnFromBottom ? wallH + 120 : homeY,
+                vx: 0,
+                vy: 0,
+                baseScale: scale,
+                scale: spawnFromBottom ? scale * 0.4 : scale,
+                baseRot: (Math.random() - 0.5) * 0.36,
+                rot: (Math.random() - 0.5) * 0.36,
+                phase: Math.random() * Math.PI * 2,
+                floatSpeed: 0.65 + Math.random() * 0.55,
+                alpha: 1
+            };
+        }
+
+        function getVisibleOrnaments() {
+            return showPresets ? ornaments : ornaments.filter(o => o.isUserCreated);
+        }
+
+        // 柔和排斥：確保所有掛飾像氣球般均勻分佈在畫面上，不會擠在一起
+        function relaxLayoutStep() {
+            const list = getVisibleOrnaments();
+            const minDist = Math.min(wallW, wallH) < 600 ? 86 : 122;
+            const marginX = Math.max(60, wallW * 0.07);
+            const marginTop = Math.max(110, wallH * 0.14);
+            const marginBot = Math.max(90, wallH * 0.13);
+
+            for (let i = 0; i < list.length; i++) {
+                const a = list[i];
+                for (let j = i + 1; j < list.length; j++) {
+                    const b = list[j];
+                    const dx = b.homeX - a.homeX;
+                    const dy = b.homeY - a.homeY;
+                    const dist = Math.hypot(dx, dy) || 0.01;
+                    if (dist < minDist) {
+                        const push = (minDist - dist) * 0.04;
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        a.homeX -= nx * push;
+                        a.homeY -= ny * push;
+                        b.homeX += nx * push;
+                        b.homeY += ny * push;
+                    }
+                }
+                a.homeX = Math.max(marginX, Math.min(wallW - marginX, a.homeX));
+                a.homeY = Math.max(marginTop, Math.min(wallH - marginBot, a.homeY));
+            }
+        }
+
+        function initSnow() {
+            snowFlakes = [];
+            const count = Math.min(60, Math.floor((wallW * wallH) / 18000));
+            for (let i = 0; i < Math.max(24, count); i++) {
+                snowFlakes.push({
+                    x: Math.random() * wallW,
+                    y: Math.random() * wallH,
+                    r: 1.5 + Math.random() * 2.8,
+                    vy: 14 + Math.random() * 24,
+                    vx: (Math.random() - 0.5) * 14,
+                    phase: Math.random() * Math.PI * 2,
+                    alpha: 0.2 + Math.random() * 0.45
+                });
+            }
+        }
+
+        function spawnSparkles(cx, cy, count = 14) {
+            for (let i = 0; i < count; i++) {
+                const ang = Math.random() * Math.PI * 2;
+                const spd = 45 + Math.random() * 140;
+                sparkles.push({
+                    x: cx,
+                    y: cy,
+                    vx: Math.cos(ang) * spd,
+                    vy: Math.sin(ang) * spd,
+                    size: 3 + Math.random() * 5,
+                    life: 0.6 + Math.random() * 0.6,
+                    maxLife: 1.2,
+                    color: Math.random() > 0.4 ? '#f3ca5f' : '#faf4e6'
+                });
+            }
+        }
+
+        function updateArtworkCounter() {
+            const visibleCount = getVisibleOrnaments().length;
+            document.getElementById('artworkCount').textContent = visibleCount;
+        }
+
+        function initOrnaments() {
+            ornaments = [];
+            PRESET_GALLERY.forEach(item => {
+                ornaments.push(createOrnamentObj({
+                    shape: item.shape,
+                    color: item.color,
+                    strokes: buildPresetStrokes(item.shape, item.variant),
+                    author: item.author
+                }));
+            });
+
+            for (let step = 0; step < 45; step++) {
+                relaxLayoutStep();
+            }
+            updateArtworkCounter();
+        }
+
+        // ============================================================
+        // 🎬 核心招牌動畫：群眾散開 ＋ 置中放大 ＋ 逐筆重播循環秀
+        // ============================================================
+        // Teacher dashboard retains the original names; the public artwork wall displays English only.
+        function publicEnglishText(value, fallback = '🎨 Student Artist') {
+            const text = String(value || '').trim();
+            return /[\u3400-\u9fff\uf900-\ufaff]/u.test(text) ? fallback : (text || fallback);
+        }
+
+        function showSpotlightBadge(text) {
+            const badge = document.getElementById('spotlightBadge');
+            document.getElementById('badgeText').textContent = publicEnglishText(text);
+            badge.classList.remove('opacity-0', 'translate-y-4');
+            badge.classList.add('opacity-100', 'translate-y-0');
+        }
+
+        function hideSpotlightBadge() {
+            const badge = document.getElementById('spotlightBadge');
+            badge.classList.add('opacity-0', 'translate-y-4');
+            badge.classList.remove('opacity-100', 'translate-y-0');
+        }
+
+        function startShowcase(targetId = null) {
+            const visible = getVisibleOrnaments();
+            if (visible.length === 0) return;
+
+            let chosen = null;
+            if (targetId !== null) {
+                chosen = visible.find(o => o.id === targetId);
+            }
+            if (!chosen) {
+                showcaseQueueIdx = showcaseQueueIdx % visible.length;
+                chosen = visible[showcaseQueueIdx];
+                showcaseQueueIdx = (showcaseQueueIdx + 1) % visible.length;
+            }
+
+            showcase.state = 'ENTERING';
+            showcase.targetId = chosen.id;
+            showcase.progress = 0;
+            showcase.replayPointsDrawn = 0;
+            showcase.totalPoints = chosen.totalPoints;
+            showcase.timer = 0.72;
+            showSpotlightBadge(chosen.author);
+            playChime('spotlight');
+        }
+
+        function updateShowcase(dt) {
+            const visible = getVisibleOrnaments();
+            if (visible.length === 0) {
+                showcase.state = 'IDLE';
+                showcase.targetId = null;
+                hideSpotlightBadge();
+                return;
+            }
+
+            const speed = showcaseSpeedMultiplier;
+
+            if (showcase.state === 'IDLE') {
+                if (autoLoopEnabled && !isStudioOpen) {
+                    showcase.timer -= dt * speed;
+                    if (showcase.timer <= 0) {
+                        startShowcase();
+                    }
+                }
+            } else if (showcase.state === 'ENTERING') {
+                showcase.timer -= dt * speed;
+                showcase.progress = Math.min(1, 1 - showcase.timer / 0.72);
+                if (showcase.timer <= 0) {
+                    showcase.state = 'REPLAYING';
+                    showcase.replayPointsDrawn = 0;
+                    spawnSparkles(wallW * 0.5, wallH * 0.5, 16);
+                }
+            } else if (showcase.state === 'REPLAYING') {
+                // 逐筆流暢繪製，速度依筆畫點數自動正規化（約 2.4 秒畫完）
+                const ptsPerSec = Math.max(22, (showcase.totalPoints / 2.35)) * speed;
+                showcase.replayPointsDrawn += ptsPerSec * dt;
+                if (showcase.replayPointsDrawn >= showcase.totalPoints) {
+                    showcase.replayPointsDrawn = showcase.totalPoints;
+                    showcase.state = 'HOLDING';
+                    showcase.timer = 1.85;
+                    spawnSparkles(wallW * 0.5, wallH * 0.5, 22);
+                    playChime('complete');
+                }
+            } else if (showcase.state === 'HOLDING') {
+                showcase.timer -= dt * speed;
+                if (showcase.timer <= 0) {
+                    showcase.state = 'EXITING';
+                    showcase.timer = 0.65;
+                    hideSpotlightBadge();
+                }
+            } else if (showcase.state === 'EXITING') {
+                showcase.timer -= dt * speed;
+                showcase.progress = Math.max(0, showcase.timer / 0.65);
+                if (showcase.timer <= 0) {
+                    showcase.state = 'IDLE';
+                    showcase.targetId = null;
+                    showcase.progress = 0;
+                    showcase.timer = 2.0;
+                }
+            }
+        }
+
+        // 繪製單一聖誕掛飾（支援部分筆畫進度重播！）
+        function drawOrnament(c, orn, pointsBudget = Infinity) {
+            c.save();
+            c.translate(orn.x, orn.y);
+            c.rotate(orn.rot);
+            c.scale(orn.scale, orn.scale);
+            c.globalAlpha = orn.alpha;
+
+            // 柔和陰影增加立體層次
+            c.shadowColor = 'rgba(0, 0, 0, 0.28)';
+            c.shadowBlur = 18;
+            c.shadowOffsetY = 8;
+
+            // 填滿霧面撞色本體
+            traceShapePath(c, orn.shape);
+            c.fillStyle = orn.color;
+            c.fill();
+
+            // 關閉陰影，開始裁切並繪製奶油白手繪筆觸
+            c.shadowColor = 'transparent';
+            c.shadowBlur = 0;
+            c.shadowOffsetY = 0;
+
+            c.save();
+            traceShapePath(c, orn.shape);
+            c.clip();
+
+            c.strokeStyle = STROKE_COLOR;
+            c.lineCap = 'round';
+            c.lineJoin = 'round';
+
+            let remaining = pointsBudget;
+            for (const stroke of orn.strokes) {
+                const pts = stroke.points;
+                if (!pts || pts.length === 0 || remaining <= 0) continue;
+
+                c.lineWidth = stroke.width || 6;
+                c.beginPath();
+                c.moveTo(pts[0].x, pts[0].y);
+
+                const drawCount = Math.min(pts.length, Math.floor(remaining));
+                for (let i = 1; i < drawCount; i++) {
+                    c.lineTo(pts[i].x, pts[i].y);
+                }
+
+                // 單點筆畫也畫出小圓點
+                if (drawCount === 1 && pts.length === 1) {
+                    c.lineTo(pts[0].x + 0.1, pts[0].y + 0.1);
+                } else if (drawCount < pts.length && remaining > drawCount) {
+                    // 平滑內插筆尖位置
+                    const frac = remaining - drawCount;
+                    const pPrev = pts[Math.max(0, drawCount - 1)];
+                    const pNext = pts[drawCount];
+                    c.lineTo(pPrev.x + (pNext.x - pPrev.x) * frac, pPrev.y + (pNext.y - pPrev.y) * frac);
+                }
+
+                c.stroke();
+                remaining -= pts.length;
+            }
+            c.restore();
+
+            // 淡淡紙感高光外緣
+            traceShapePath(c, orn.shape);
+            c.strokeStyle = 'rgba(250, 244, 230, 0.12)';
+            c.lineWidth = 2;
+            c.stroke();
+
+            c.restore();
+        }
+
+        // 主動畫迴圈
+        function animateLoop(now) {
+            const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+            lastFrameTime = now;
+            const timeSec = now / 1000;
+
+            updateShowcase(dt);
+            relaxLayoutStep();
+
+            // 1. 鋪上深松綠紙紋底色
+            if (paperPatternCanvas) {
+                const pat = ctx.createPattern(paperPatternCanvas, 'repeat');
+                ctx.fillStyle = pat || BG_COLOR;
+            } else {
+                ctx.fillStyle = BG_COLOR;
+            }
+            ctx.fillRect(0, 0, wallW, wallH);
+
+            // 中央柔和暗角光暈（讓聚焦作品更有舞台感）
+            const radGrad = ctx.createRadialGradient(wallW * 0.5, wallH * 0.5, 40, wallW * 0.5, wallH * 0.5, Math.max(wallW, wallH) * 0.72);
+            radGrad.addColorStop(0, 'rgba(255, 248, 225, 0.04)');
+            radGrad.addColorStop(1, 'rgba(4, 24, 20, 0.42)');
+            ctx.fillStyle = radGrad;
+            ctx.fillRect(0, 0, wallW, wallH);
+
+            // 2. 更新並繪製柔和雪花
+            ctx.fillStyle = STROKE_COLOR;
+            for (const f of snowFlakes) {
+                f.y += f.vy * dt;
+                f.x += (f.vx + Math.sin(timeSec + f.phase) * 10) * dt;
+                if (f.y > wallH + 10) {
+                    f.y = -10;
+                    f.x = Math.random() * wallW;
+                }
+                if (f.x < -10) f.x = wallW + 10;
+                if (f.x > wallW + 10) f.x = -10;
+                ctx.globalAlpha = f.alpha;
+                ctx.beginPath();
+                ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // 3. 更新每個掛飾位置（含群眾向外散開讓出中央舞台的效果）
+            const visible = getVisibleOrnaments();
+            const isSpotlighting = showcase.state !== 'IDLE' && showcase.targetId !== null;
+            const partFactor = showcase.state === 'ENTERING'
+                ? showcase.progress
+                : (showcase.state === 'EXITING' ? showcase.progress : (isSpotlighting ? 1 : 0));
+
+            const centerX = wallW * 0.5;
+            const centerY = wallH * 0.51;
+            const stageRadius = Math.min(wallW, wallH) * 0.36;
+            const targetScale = Math.min(wallW, wallH) / 265;
+
+            let spotlightOrn = null;
+
+            for (const o of visible) {
+                const bobX = Math.sin(timeSec * o.floatSpeed + o.phase) * 7;
+                const bobY = Math.cos(timeSec * o.floatSpeed * 0.9 + o.phase) * 9;
+                const bobRot = Math.sin(timeSec * 0.7 + o.phase) * 0.07;
+
+                if (isSpotlighting && o.id === showcase.targetId) {
+                    spotlightOrn = o;
+                    // 飛向中央放大，退場時優雅回到漂浮原位
+                    const destX = showcase.state === 'EXITING' ? (o.homeX + bobX) : centerX;
+                    const destY = showcase.state === 'EXITING' ? (o.homeY + bobY) : centerY;
+                    const destScale = showcase.state === 'EXITING' ? o.baseScale : targetScale;
+                    const destRot = showcase.state === 'EXITING' ? (o.baseRot + bobRot) : (Math.sin(timeSec * 1.6) * 0.04);
+
+                    const lerp = 1 - Math.exp(-8.5 * dt);
+                    o.x += (destX - o.x) * lerp;
+                    o.y += (destY - o.y) * lerp;
+                    o.scale += (destScale - o.scale) * lerp;
+                    o.rot += (destRot - o.rot) * lerp;
+                    o.alpha += (1 - o.alpha) * lerp;
+                } else {
+                    // 其他掛飾：當有主角登場時，向外優雅散開讓出乾淨舞台
+                    let tx = o.homeX + bobX;
+                    let ty = o.homeY + bobY;
+                    let tAlpha = 1;
+
+                    if (partFactor > 0.01) {
+                        const dx = tx - centerX;
+                        const dy = ty - centerY;
+                        const dist = Math.hypot(dx, dy) || 1;
+                        if (dist < stageRadius * 1.45) {
+                            const pushOut = (stageRadius * 1.45 - dist) * 1.05 * partFactor;
+                            tx += (dx / dist) * pushOut;
+                            ty += (dy / dist) * pushOut;
+                        }
+                        tAlpha = 1 - 0.25 * partFactor;
+                    }
+
+                    const lerp = 1 - Math.exp(-5.5 * dt);
+                    o.x += (tx - o.x) * lerp;
+                    o.y += (ty - o.y) * lerp;
+                    o.scale += (o.baseScale - o.scale) * lerp;
+                    o.rot += (o.baseRot + bobRot - o.rot) * lerp;
+                    o.alpha += (tAlpha - o.alpha) * lerp;
+
+                    drawOrnament(ctx, o, Infinity);
+                }
+            }
+
+            // 4. 最後繪製主角掛飾（確保在最上層並進行逐筆重播！）
+            if (spotlightOrn) {
+                const budget = showcase.state === 'ENTERING'
+                    ? 0
+                    : (showcase.state === 'REPLAYING' ? showcase.replayPointsDrawn : Infinity);
+                drawOrnament(ctx, spotlightOrn, budget);
+            }
+
+            // 5. 繪製閃亮星塵粒子
+            for (let i = sparkles.length - 1; i >= 0; i--) {
+                const p = sparkles[i];
+                p.life -= dt;
+                if (p.life <= 0) {
+                    sparkles.splice(i, 1);
+                    continue;
+                }
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vx *= 0.96;
+                p.vy *= 0.96;
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * (p.life / p.maxLife), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            requestAnimationFrame(animateLoop);
+        }
+
+        // 點擊牆上任一掛飾立刻將它拉到中央進行逐筆重播！
+        wallCanvas.addEventListener('pointerdown', (e) => {
+            if (isStudioOpen || isAdminOpen) return;
+            const rect = wallCanvas.getBoundingClientRect();
+            const px = e.clientX - rect.left;
+            const py = e.clientY - rect.top;
+
+            const visible = getVisibleOrnaments();
+            let closest = null;
+            let bestDist = 75;
+            for (const o of visible) {
+                const d = Math.hypot(o.x - px, o.y - py);
+                const hitRadius = Math.max(48, 95 * o.scale);
+                if (d < hitRadius && d < bestDist) {
+                    bestDist = d;
+                    closest = o;
+                }
+            }
+            if (closest) {
+                initAudio();
+                startShowcase(closest.id);
+            }
+        });
+
+        function resizeWall() {
+            wallW = window.innerWidth || 800;
+            wallH = window.innerHeight || 600;
+            dpr = Math.min(window.devicePixelRatio || 1, 2);
+            wallCanvas.width = Math.floor(wallW * dpr);
+            wallCanvas.height = Math.floor(wallH * dpr);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            initSnow();
+        }
+        window.addEventListener('resize', resizeWall);
+
+        // ============================================================
+        // 🎵 柔和聖誕八音盒音樂與互動音效（Tone.js，免外部音檔）
+        // ============================================================
+        let audioReady = false;
+        let musicPlaying = false;
+        let musicSynth = null;
+        let musicPart = null;
+        let chimeSynth = null;
+
+        const CHRISTMAS_MELODY = [
+            // 鈴兒響叮噹 (Jingle Bells)
+            ['0:0', 'E5', '8n'], ['0:0:2', 'E5', '8n'], ['0:1', 'E5', '4n'],
+            ['0:2', 'E5', '8n'], ['0:2:2', 'E5', '8n'], ['0:3', 'E5', '4n'],
+            ['1:0', 'E5', '8n'], ['1:0:2', 'G5', '8n'], ['1:1', 'C5', '8n'], ['1:1:2', 'D5', '8n'], ['1:2', 'E5', '2n'],
+            ['2:0', 'F5', '8n'], ['2:0:2', 'F5', '8n'], ['2:1', 'F5', '8n'], ['2:1:2', 'F5', '8n'],
+            ['2:2', 'F5', '8n'], ['2:2:2', 'E5', '8n'], ['2:3', 'E5', '8n'], ['2:3:2', 'E5', '8n'],
+            ['3:0', 'E5', '8n'], ['3:0:2', 'D5', '8n'], ['3:1', 'D5', '8n'], ['3:1:2', 'E5', '8n'], ['3:2', 'D5', '4n'], ['3:3', 'G5', '4n'],
+            // 祝你聖誕快樂 (We Wish You a Merry Christmas)
+            ['4:0', 'D5', '8n'], ['4:0:2', 'G5', '8n'], ['4:1', 'G5', '16n'], ['4:1:1', 'A5', '16n'], ['4:1:2', 'G5', '16n'], ['4:1:3', 'F#5', '16n'],
+            ['4:2', 'E5', '8n'], ['4:2:2', 'E5', '8n'], ['4:3', 'E5', '8n'], ['4:3:2', 'A5', '8n'],
+            ['5:0', 'A5', '16n'], ['5:0:1', 'B5', '16n'], ['5:0:2', 'A5', '16n'], ['5:0:3', 'G5', '16n'],
+            ['5:1', 'F#5', '8n'], ['5:1:2', 'D5', '8n'], ['5:2', 'D5', '8n'], ['5:2:2', 'B5', '8n'],
+            ['5:3', 'B5', '16n'], ['5:3:1', 'C6', '16n'], ['5:3:2', 'B5', '16n'], ['5:3:3', 'A5', '16n'],
+            ['6:0', 'G5', '8n'], ['6:0:2', 'E5', '8n'], ['6:1', 'D5', '8n'], ['6:1:2', 'E5', '8n'],
+            ['6:2', 'A5', '8n'], ['6:2:2', 'F#5', '8n'], ['6:3', 'G5', '2n']
+        ];
+
+        function initAudio() {
+            if (audioReady || typeof Tone === 'undefined') return;
+            try {
+                Tone.start();
+                musicSynth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: 'triangle' },
+                    envelope: { attack: 0.02, decay: 0.35, sustain: 0.12, release: 1.1 }
+                }).toDestination();
+                musicSynth.volume.value = -14;
+
+                chimeSynth = new Tone.Synth({
+                    oscillator: { type: 'sine' },
+                    envelope: { attack: 0.01, decay: 0.2, sustain: 0.05, release: 0.5 }
+                }).toDestination();
+                chimeSynth.volume.value = -12;
+
+                Tone.Transport.bpm.value = 104;
+                musicPart = new Tone.Part((time, ev) => {
+                    musicSynth.triggerAttackRelease(ev.note, ev.dur, time);
+                }, CHRISTMAS_MELODY.map(([t, note, dur]) => ({ time: t, note, dur })));
+                musicPart.loop = true;
+                musicPart.loopEnd = '7:2';
+                audioReady = true;
+            } catch (e) {}
+        }
+
+        function playChime(type) {
+            if (!audioReady || !chimeSynth || !musicPlaying) return;
+            try {
+                const now = Tone.now();
+                if (type === 'spotlight') {
+                    chimeSynth.triggerAttackRelease('C6', '16n', now);
+                } else if (type === 'complete') {
+                    chimeSynth.triggerAttackRelease('E6', '16n', now);
+                    chimeSynth.triggerAttackRelease('G6', '8n', now + 0.08);
+                } else if (type === 'submit') {
+                    chimeSynth.triggerAttackRelease('C5', '16n', now);
+                    chimeSynth.triggerAttackRelease('E5', '16n', now + 0.07);
+                    chimeSynth.triggerAttackRelease('G5', '16n', now + 0.14);
+                    chimeSynth.triggerAttackRelease('C6', '8n', now + 0.21);
+                }
+            } catch (e) {}
+        }
+
+        // ============================================================
+        // 🖍️ 現場手繪創作室（平板級流暢畫布）
+        // ============================================================
+        const studioModal = document.getElementById('studioModal');
+        const drawCanvas = document.getElementById('drawCanvas');
+        const dCtx = drawCanvas.getContext('2d');
+
+        let selectedShape = 'stocking';
+        let selectedColor = PALETTE[0].hex;
+        let selectedBrush = 7;
+        let userStrokes = [];
+        let isDrawing = false;
+        let activeStroke = null;
+        let drawScale = 1;
+        let drawCenterX = 150;
+        let drawCenterY = 150;
+
+        function buildStudioControls() {
+            const shapePicker = document.getElementById('shapePicker');
+            shapePicker.innerHTML = '';
+            SHAPES.forEach(sh => {
+                const btn = document.createElement('button');
+                btn.dataset.shape = sh.id;
+                btn.className = 'shape-btn btn-pill shrink-0 px-3 py-1.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border';
+                btn.innerHTML = `<span>${sh.icon}</span><span>${sh.label}</span>`;
+                btn.addEventListener('click', () => {
+                    selectedShape = sh.id;
+                    updateStudioPickerStyles();
+                    renderDrawCanvas();
+                });
+                shapePicker.appendChild(btn);
+            });
+
+            const colorPicker = document.getElementById('colorPicker');
+            colorPicker.innerHTML = '';
+            PALETTE.forEach(c => {
+                const btn = document.createElement('button');
+                btn.dataset.color = c.hex;
+                btn.title = c.name;
+                btn.className = 'color-btn btn-pill w-8 h-8 rounded-full shadow-md transition-transform';
+                btn.style.backgroundColor = c.hex;
+                btn.addEventListener('click', () => {
+                    selectedColor = c.hex;
+                    updateStudioPickerStyles();
+                    renderDrawCanvas();
+                });
+                colorPicker.appendChild(btn);
+            });
+
+            document.querySelectorAll('.brush-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    selectedBrush = parseFloat(btn.dataset.width);
+                    document.querySelectorAll('.brush-btn').forEach(b => {
+                        const isSel = parseFloat(b.dataset.width) === selectedBrush;
+                        b.className = isSel
+                            ? 'brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-[#f3ca5f] ring-2 ring-[#faf4e6]'
+                            : 'brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10';
+                        b.querySelector('span').style.backgroundColor = isSel ? '#0e3a32' : '#faf4e6';
+                    });
+                });
+            });
+
+            updateStudioPickerStyles();
+        }
+
+        function updateStudioPickerStyles() {
+            document.querySelectorAll('.shape-btn').forEach(btn => {
+                const active = btn.dataset.shape === selectedShape;
+                btn.className = active
+                    ? 'shape-btn btn-pill shrink-0 px-3 py-1.5 rounded-2xl text-xs font-black flex items-center gap-1.5 border bg-[#f3ca5f] text-[#0e3a32] border-[#f3ca5f]'
+                    : 'shape-btn btn-pill shrink-0 px-3 py-1.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border bg-[#0c332c] text-[#faf4e6]/85 border-white/15';
+            });
+            document.querySelectorAll('.color-btn').forEach(btn => {
+                const active = btn.dataset.color === selectedColor;
+                btn.style.outline = active ? '3px solid #faf4e6' : 'none';
+                btn.style.outlineOffset = '2px';
+                btn.style.transform = active ? 'scale(1.12)' : 'scale(1)';
+            });
+        }
+
+        function resizeDrawCanvas() {
+            const box = drawCanvas.parentElement;
+            const rect = box.getBoundingClientRect();
+            const size = Math.max(220, Math.floor(Math.min(rect.width, rect.height)));
+            const ratio = Math.min(window.devicePixelRatio || 1, 2);
+            drawCanvas.width = size * ratio;
+            drawCanvas.height = size * ratio;
+            dCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+            drawCenterX = size * 0.5;
+            drawCenterY = size * 0.5;
+            drawScale = (size * 0.42) / 100;
+            renderDrawCanvas();
+        }
+
+        function renderDrawCanvas() {
+            const size = drawCenterX * 2;
+            dCtx.clearRect(0, 0, size, size);
+
+            dCtx.save();
+            dCtx.translate(drawCenterX, drawCenterY);
+            dCtx.scale(drawScale, drawScale);
+
+            // 掛飾底色本體
+            traceShapePath(dCtx, selectedShape);
+            dCtx.fillStyle = selectedColor;
+            dCtx.fill();
+
+            // 虛線提示範圍
+            dCtx.save();
+            dCtx.setLineDash([6, 6]);
+            dCtx.strokeStyle = 'rgba(250, 244, 230, 0.28)';
+            dCtx.lineWidth = 2.5;
+            dCtx.stroke();
+            dCtx.restore();
+
+            // 裁切並畫出奶油白筆跡
+            dCtx.save();
+            traceShapePath(dCtx, selectedShape);
+            dCtx.clip();
+
+            dCtx.strokeStyle = STROKE_COLOR;
+            dCtx.lineCap = 'round';
+            dCtx.lineJoin = 'round';
+
+            for (const s of userStrokes) {
+                if (!s.points.length) continue;
+                dCtx.lineWidth = s.width;
+                dCtx.beginPath();
+                dCtx.moveTo(s.points[0].x, s.points[0].y);
+                for (let i = 1; i < s.points.length; i++) {
+                    dCtx.lineTo(s.points[i].x, s.points[i].y);
+                }
+                if (s.points.length === 1) {
+                    dCtx.lineTo(s.points[0].x + 0.1, s.points[0].y + 0.1);
+                }
+                dCtx.stroke();
+            }
+            dCtx.restore();
+            dCtx.restore();
+
+            document.getElementById('drawHint').style.opacity = userStrokes.length > 0 ? '0' : '1';
+        }
+
+        function getLocalDrawPoint(e) {
+            const rect = drawCanvas.getBoundingClientRect();
+            const sx = (e.clientX - rect.left) * ((drawCenterX * 2) / rect.width);
+            const sy = (e.clientY - rect.top) * ((drawCenterY * 2) / rect.height);
+            return {
+                x: Math.round(((sx - drawCenterX) / drawScale) * 10) / 10,
+                y: Math.round(((sy - drawCenterY) / drawScale) * 10) / 10
+            };
+        }
+
+        drawCanvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            drawCanvas.setPointerCapture(e.pointerId);
+            isDrawing = true;
+            const pt = getLocalDrawPoint(e);
+            activeStroke = { width: selectedBrush, points: [pt] };
+            userStrokes.push(activeStroke);
+            renderDrawCanvas();
+        });
+
+        drawCanvas.addEventListener('pointermove', (e) => {
+            if (!isDrawing || !activeStroke) return;
+            e.preventDefault();
+            const pt = getLocalDrawPoint(e);
+            const last = activeStroke.points[activeStroke.points.length - 1];
+            if (Math.hypot(pt.x - last.x, pt.y - last.y) >= 2.2) {
+                activeStroke.points.push(pt);
+                renderDrawCanvas();
+            }
+        });
+
+        function finishStroke() {
+            isDrawing = false;
+            activeStroke = null;
+        }
+        drawCanvas.addEventListener('pointerup', finishStroke);
+        drawCanvas.addEventListener('pointercancel', finishStroke);
+
+        function openStudio() {
+            if (!allowDrawing) {
+                showToast('🔒 Drawing is paused for now.');
+                return;
+            }
+            initAudio();
+            hideStudentStatus();
+            document.getElementById('studentReturnToStudioBtn').classList.add('hidden');
+            isStudioOpen = true;
+            userStrokes = [];
+            document.getElementById('authorInput').value = '';
+            document.getElementById('submitArtBtnText').textContent = isStudentDrawMode
+                ? '✨ Submit My Decoration'
+                : (requireApproval ? '✨ Submit My Decoration' : '✨ Submit My Decoration');
+            studioModal.classList.remove('hidden');
+            studioModal.classList.add('flex');
+            requestAnimationFrame(() => resizeDrawCanvas());
+        }
+
+        function closeStudio() {
+            isStudioOpen = false;
+            studioModal.classList.add('hidden');
+            studioModal.classList.remove('flex');
+        }
+
+        // ============================================================
+        // ☁️ 多裝置即時同步 ＋ 雲端審核引擎（自動偵測環境金鑰）
+        // ============================================================
+        function getArtworksCollectionRef() {
+            return fbModules.collection(db, 'artifacts', appId, 'public', 'data', 'artworks');
+        }
+
+        function getSettingsDocRef() {
+            return fbModules.doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'classroom');
+        }
+
+        async function initCloudSync() {
+            const dot = document.getElementById('cloudStatusDot');
+            const label = document.getElementById('cloudStatusLabel');
+            const uidEl = document.getElementById('adminUserIdDisplay');
+
+            try {
+                let firebaseConfig = wallConfig.firebase;
+                if (!firebaseConfig && typeof __firebase_config !== 'undefined' && __firebase_config) {
+                    firebaseConfig = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+                }
+                if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+                    throw new Error('Firebase project is not configured');
+                }
+
+                const [appMod, authMod, fsMod] = await Promise.all([
+                    import('https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js'),
+                    import('https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js'),
+                    import('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js')
+                ]);
+                fbModules = { ...appMod, ...authMod, ...fsMod };
+                const app = fbModules.initializeApp(firebaseConfig);
+                auth = fbModules.getAuth(app);
+                db = fbModules.getFirestore(app);
+
+                if (typeof auth.authStateReady === 'function') await auth.authStateReady();
+                // 學生一律用匿名帳號，避免沿用同瀏覽器之前登入的教師權限。
+                if (isStudentDrawMode || !isTrustedTeacher(auth.currentUser)) {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && !isStudentDrawMode) {
+                        await fbModules.signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await fbModules.signInAnonymously(auth);
+                    }
+                }
+
+                currentUser = auth.currentUser;
+                if (!currentUser) throw new Error('AUTH_FAILED');
+                cloudReady = true;
+                adminUnlocked = !isStudentDrawMode && isTrustedTeacher(currentUser);
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
+                label.textContent = '🟢 多裝置雲端即時同步中';
+                uidEl.textContent = currentUser.uid;
+                startCloudSubscriptions();
+            } catch (err) {
+                cloudReady = false;
+                console.warn('雲端同步尚未啟用：', err.message || err);
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+                label.textContent = '🟡 單機預覽模式（尚未連接 Firebase）';
+                uidEl.textContent = 'local-classroom-preview';
+            }
+        }
+
+        function startCloudSubscriptions() {
+            if (unsubscribeArtworks) unsubscribeArtworks();
+            if (unsubscribeSettings) unsubscribeSettings();
+            cloudSettingsLoaded = false;
+            subscribeToCloudArtworks();
+            subscribeToCloudSettings();
+        }
+
+        function subscribeToCloudArtworks() {
+            if (!cloudReady || !currentUser || !fbModules) return;
+            // 未登入教師的裝置只能訂閱「已核准」作品，待審核作品只供教師檢視。
+            const queryRef = isTrustedTeacher(currentUser)
+                ? getArtworksCollectionRef()
+                : fbModules.query(getArtworksCollectionRef(), fbModules.where('status', '==', 'approved'));
+            unsubscribeArtworks = fbModules.onSnapshot(
+                queryRef,
+                (snapshot) => {
+                    const allDocs = [];
+                    snapshot.forEach((docSnap) => {
+                        const d = docSnap.data();
+                        let parsedStrokes = [];
+                        try {
+                            parsedStrokes = typeof d.strokesJson === 'string'
+                                ? JSON.parse(d.strokesJson)
+                                : (Array.isArray(d.strokes) ? d.strokes : []);
+                        } catch (e) {
+                            parsedStrokes = [];
+                        }
+                        allDocs.push({
+                            docId: docSnap.id,
+                            shape: d.shape || 'stocking',
+                            color: d.color || PALETTE[0].hex,
+                            strokes: parsedStrokes,
+                            author: d.author || '🖍️ Student Artist',
+                            status: d.status || 'approved',
+                            createdAt: d.createdAt || 0,
+                            creatorUid: d.creatorUid || ''
+                        });
+                    });
+
+                    allDocs.sort((a, b) => b.createdAt - a.createdAt);
+                    cloudArtworks = allDocs;
+
+                    syncApprovedArtworksToWall();
+                    updatePendingBadges();
+                    if (isAdminOpen && adminUnlocked) {
+                        renderAdminPanels();
+                    }
+                },
+                (err) => {
+                    console.error('監聽作品集合失敗:', err);
+                    if (!isStudentDrawMode) showToast('⚠️ 作品同步暫時中斷，請檢查連線');
+                }
+            );
+        }
+
+        function syncApprovedArtworksToWall() {
+            const approvedDocs = cloudArtworks.filter(a => a.status === 'approved');
+            const approvedIdSet = new Set(approvedDocs.map(a => a.docId));
+
+            // 1. 移除已被下架的作品
+            for (let i = ornaments.length - 1; i >= 0; i--) {
+                const o = ornaments[i];
+                if (o.isUserCreated && !approvedIdSet.has(o.uid)) {
+                    if (showcase.targetId === o.id) {
+                        showcase.state = 'IDLE';
+                        showcase.targetId = null;
+                        showcase.timer = 1.5;
+                        hideSpotlightBadge();
+                    }
+                    ornaments.splice(i, 1);
+                }
+            }
+
+            // 2. 新增剛通過審核的作品上牆
+            let newestApprovedOrn = null;
+            const existingUids = new Set(ornaments.filter(o => o.isUserCreated).map(o => o.uid));
+
+            [...approvedDocs].reverse().forEach(docItem => {
+                if (!existingUids.has(docItem.docId)) {
+                    const isFreshArrival = initialCloudSynced && !knownApprovedIds.has(docItem.docId);
+                    const newOrn = createOrnamentObj({
+                        uid: docItem.docId,
+                        shape: docItem.shape,
+                        color: docItem.color,
+                        strokes: docItem.strokes,
+                        author: docItem.author,
+                        isUserCreated: true
+                    }, isFreshArrival);
+                    ornaments.push(newOrn);
+                    if (isFreshArrival) newestApprovedOrn = newOrn;
+                }
+                knownApprovedIds.add(docItem.docId);
+            });
+
+            if (!initialCloudSynced) {
+                initialCloudSynced = true;
+                for (let step = 0; step < 25; step++) relaxLayoutStep();
+            } else if (newestApprovedOrn && !isStudioOpen) {
+                playChime('submit');
+                startShowcase(newestApprovedOrn.id);
+            }
+
+            updateArtworkCounter();
+        }
+
+        function subscribeToCloudSettings() {
+            if (!cloudReady || !currentUser || !fbModules) return;
+            unsubscribeSettings = fbModules.onSnapshot(
+                getSettingsDocRef(),
+                (docSnap) => {
+                    cloudSettingsLoaded = true;
+                    if (!docSnap.exists()) return;
+                    const cfg = docSnap.data();
+
+                    if (typeof cfg.subtitle === 'string') {
+                        const subEl = document.getElementById('subTitle');
+                        document.getElementById('classSubtitleInput').value = cfg.subtitle;
+                        const publicSubtitle = cfg.subtitle.trim() ? publicEnglishText(cfg.subtitle, 'Christmas Art Wall') : '';
+                        subEl.textContent = publicSubtitle;
+                        subEl.classList.toggle('hidden', !publicSubtitle);
+                    }
+
+                    if (typeof cfg.allowDrawing === 'boolean') {
+                        allowDrawing = cfg.allowDrawing;
+                        document.getElementById('toggleAllowDraw').checked = allowDrawing;
+                        document.getElementById('openStudioBtn').classList.toggle('hidden', !allowDrawing);
+                        if (isStudentDrawMode && !allowDrawing) {
+                            document.getElementById('studentReturnToStudioBtn').classList.add('hidden');
+                        }
+                        if (!allowDrawing && isStudioOpen) {
+                            closeStudio();
+                            showStudentStatus('🔒', 'Drawing Is Paused', 'Please look at the art wall or wait for your teacher.', false);
+                        }
+                    }
+
+                    if (typeof cfg.requireApproval === 'boolean') {
+                        requireApproval = cfg.requireApproval;
+                        updateApprovalModeUI();
+                        document.getElementById('submitArtBtnText').textContent = isStudentDrawMode
+                            ? '✨ Submit My Decoration'
+                            : (requireApproval ? '✨ Submit My Decoration' : '✨ Submit My Decoration');
+                    }
+
+                    if (typeof cfg.showPresets === 'boolean') {
+                        showPresets = cfg.showPresets;
+                        document.getElementById('toggleShowPresets').checked = showPresets;
+                        updateArtworkCounter();
+                    }
+
+                    if (typeof cfg.speed === 'number') {
+                        showcaseSpeedMultiplier = cfg.speed;
+                        document.querySelectorAll('.speed-btn').forEach(b => {
+                            const active = Math.abs(parseFloat(b.dataset.speed) - cfg.speed) < 0.05;
+                            b.className = active
+                                ? 'speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#f3ca5f] text-[#0e3a32]'
+                                : 'speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white/10 text-[#faf4e6]/80';
+                        });
+                    }
+
+                    if (cfg.featuredArtId && cfg.featuredAt && cfg.featuredAt > lastFeaturedTimestamp) {
+                        lastFeaturedTimestamp = cfg.featuredAt;
+                        const targetOrn = ornaments.find(o => o.uid === cfg.featuredArtId);
+                        if (targetOrn && !isStudioOpen) {
+                            startShowcase(targetOrn.id);
+                        }
+                    }
+                },
+                (err) => console.error('監聽課堂設定失敗:', err)
+            );
+        }
+
+        async function updateCloudSettings(patch) {
+            if (isStudentDrawMode || !adminUnlocked) return false;
+            if (!cloudReady || !currentUser || !fbModules) return true; // 單機預覽
+            if (!isTrustedTeacher(currentUser)) return false;
+            try {
+                await fbModules.setDoc(getSettingsDocRef(), patch, { merge: true });
+                return true;
+            } catch (e) {
+                showToast('⚠️ 同步設定失敗，請檢查教師權限或網路');
+                return false;
+            }
+        }
+
+        function updateApprovalModeUI() {
+            document.getElementById('approvalModeReview').checked = requireApproval;
+            document.getElementById('approvalModeAuto').checked = !requireApproval;
+            for (const [id, active] of [['reviewModeLabel', requireApproval], ['autoModeLabel', !requireApproval]]) {
+                const el = document.getElementById(id);
+                el.classList.toggle('border-[#f3ca5f]', active);
+                el.classList.toggle('bg-[#f3ca5f]/15', active);
+                el.classList.toggle('border-white/15', !active);
+                el.classList.toggle('bg-[#0c332c]', !active);
+            }
+            document.getElementById('approvalModeNote').textContent = requireApproval
+                ? '目前：教師審核後放行（學生只看到送出成功）'
+                : '目前：作品自動放行（學生只看到送出成功）';
+        }
+
+        async function submitUserArtwork() {
+            if (isStudentDrawMode && (!cloudReady || !currentUser)) {
+                showToast('⚠️ Unable to submit. Please ask your teacher to check the connection.');
+                return;
+            }
+            if (isStudentDrawMode && !cloudSettingsLoaded) {
+                showToast('⏳ Connecting... Please try again in a moment.');
+                return;
+            }
+            if (!allowDrawing) {
+                showToast('Submissions are paused. Please try again later.');
+                return;
+            }
+            if (userStrokes.length === 0) {
+                showToast('🖍️ Add some decorations before you submit!');
+                return;
+            }
+
+            const rawAuthor = document.getElementById('authorInput').value.trim();
+            const authorLabel = rawAuthor ? `🖍️ ${rawAuthor}` : '🖍️ Student Artist';
+            const submitBtn = document.getElementById('submitArtBtn');
+            submitBtn.disabled = true;
+
+            const cleanStrokes = userStrokes.map(s => ({ width: s.width, points: s.points }));
+
+            if (cloudReady && currentUser && fbModules) {
+                try {
+                    const initialStatus = requireApproval ? 'pending' : 'approved';
+                    await fbModules.addDoc(getArtworksCollectionRef(), {
+                        shape: selectedShape,
+                        color: selectedColor,
+                        strokesJson: JSON.stringify(cleanStrokes),
+                        author: authorLabel,
+                        status: initialStatus,
+                        createdAt: Date.now(),
+                        creatorUid: currentUser.uid
+                    });
+
+                    closeStudio();
+                    playChime('submit');
+
+                    if (isStudentDrawMode) {
+                        showStudentStatus('🎄', 'Great Job!',
+                            'Your Christmas decoration has been submitted! Thank you for sharing your creativity.', true);
+                    } else if (requireApproval) {
+                        showToast('✨ Your artwork has been submitted!');
+                    } else {
+                        showToast('✨ Your artwork is on the wall!');
+                    }
+                } catch (e) {
+                    showToast('⚠️ Submission failed. Please try again.');
+                } finally {
+                    submitBtn.disabled = false;
+                }
+            } else {
+                // 單機預覽備援模式（純記憶體運作）
+                initialCloudSynced = true;
+                const localDocId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+                cloudArtworks.unshift({
+                    docId: localDocId,
+                    shape: selectedShape,
+                    color: selectedColor,
+                    strokes: cleanStrokes,
+                    author: authorLabel,
+                    status: requireApproval ? 'pending' : 'approved',
+                    createdAt: Date.now(),
+                    creatorUid: 'local'
+                });
+                syncApprovedArtworksToWall();
+                updatePendingBadges();
+                closeStudio();
+                playChime('submit');
+                submitBtn.disabled = false;
+                if (requireApproval) {
+                    showToast('✨ Preview submitted. No cloud connection.');
+                } else {
+                    showToast('✨ Preview artwork added to this screen.');
+                }
+            }
+        }
+
+        function updatePendingBadges() {
+            const pendingCount = cloudArtworks.filter(a => a.status === 'pending').length;
+            const approvedCount = cloudArtworks.filter(a => a.status === 'approved').length;
+
+            const dot = document.getElementById('pendingBadgeDot');
+            if (pendingCount > 0) {
+                dot.textContent = pendingCount > 99 ? '99+' : pendingCount;
+                dot.classList.remove('hidden');
+            } else {
+                dot.classList.add('hidden');
+            }
+            document.getElementById('tabPendingCount').textContent = pendingCount;
+            document.getElementById('tabApprovedCount').textContent = approvedCount;
+        }
+
+        function getStudentJoinUrl() {
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('mode', 'draw');
+                return url.toString();
+            } catch (e) {
+                return window.location.href;
+            }
+        }
+
+        function showStudentStatus(icon, title, desc, canDrawAgain = true) {
+            document.getElementById('studentStatusIcon').textContent = icon;
+            document.getElementById('studentStatusTitle').textContent = title;
+            document.getElementById('studentStatusDesc').textContent = desc;
+            document.getElementById('studentDrawAgainBtn').classList.toggle('hidden', !canDrawAgain);
+            const modal = document.getElementById('studentStatusModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function hideStudentStatus() {
+            const modal = document.getElementById('studentStatusModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // ============================================================
+        // 👩‍🏫 教師雲端審核後台核心邏輯
+        // ============================================================
+        const adminModal = document.getElementById('adminModal');
+        const adminPinView = document.getElementById('adminPinView');
+        const adminDashView = document.getElementById('adminDashView');
+        const adminPinInput = document.getElementById('adminPinInput');
+        let clearConfirmArmed = false;
+        let clearConfirmTimer = null;
+
+        function switchAdminTab(tabName) {
+            activeAdminTab = tabName;
+            document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+                const isActive = btn.dataset.tab === tabName;
+                btn.className = isActive
+                    ? 'admin-tab-btn py-2 rounded-xl text-xs font-black bg-[#f3ca5f] text-[#0e3a32] flex items-center justify-center gap-1.5'
+                    : 'admin-tab-btn py-2 rounded-xl text-xs font-bold text-[#faf4e6]/80 hover:bg-white/10 flex items-center justify-center gap-1.5';
+            });
+            document.getElementById('tabPanelPending').classList.toggle('hidden', tabName !== 'pending');
+            document.getElementById('tabPanelPending').classList.toggle('flex', tabName === 'pending');
+            document.getElementById('tabPanelApproved').classList.toggle('hidden', tabName !== 'approved');
+            document.getElementById('tabPanelApproved').classList.toggle('flex', tabName === 'approved');
+            document.getElementById('tabPanelSettings').classList.toggle('hidden', tabName !== 'settings');
+            document.getElementById('tabPanelSettings').classList.toggle('flex', tabName === 'settings');
+        }
+
+        function openAdminModal() {
+            if (isStudentDrawMode) return;
+            isAdminOpen = true;
+            adminModal.classList.remove('hidden');
+            adminModal.classList.add('flex');
+            document.getElementById('teacherAuthView').classList.add('hidden');
+            document.getElementById('teacherAuthView').classList.remove('flex');
+            if (adminUnlocked) {
+                adminPinView.classList.add('hidden');
+                adminDashView.classList.remove('hidden');
+                adminDashView.classList.add('flex');
+                renderAdminPanels();
+            } else {
+                adminDashView.classList.add('hidden');
+                adminDashView.classList.remove('flex');
+                if (cloudReady) {
+                    adminPinView.classList.add('hidden');
+                    document.getElementById('teacherAuthView').classList.remove('hidden');
+                    document.getElementById('teacherAuthView').classList.add('flex');
+                } else {
+                    adminPinView.classList.remove('hidden');
+                    adminPinInput.value = '';
+                    setTimeout(() => adminPinInput.focus(), 80);
+                }
+            }
+        }
+
+        function closeAdminModal() {
+            isAdminOpen = false;
+            adminModal.classList.add('hidden');
+            adminModal.classList.remove('flex');
+            resetClearConfirmBtn();
+        }
+
+        function unlockAdmin() {
+            if (isStudentDrawMode || cloudReady) return; // 雲端不可用公開 PIN 取得權限
+            if (adminPinInput.value.trim() === ADMIN_PIN) {
+                adminUnlocked = true;
+                adminPinView.classList.add('hidden');
+                adminDashView.classList.remove('hidden');
+                adminDashView.classList.add('flex');
+                switchAdminTab(cloudArtworks.some(a => a.status === 'pending') ? 'pending' : 'approved');
+                renderAdminPanels();
+                showToast('🔓 已進入教師雲端審核後台');
+            } else {
+                adminPinInput.value = '';
+                showToast('❌ 預覽密碼錯誤');
+            }
+        }
+
+
+        async function signInTeacherWithGoogle() {
+            if (isStudentDrawMode || !cloudReady || !auth || !fbModules) return;
+            if (!TEACHER_EMAIL) {
+                showToast('⚠️ 尚未設定教師 Google 信箱，請先完成 Firebase 設定');
+                return;
+            }
+            const button = document.getElementById('teacherGoogleSignInBtn');
+            button.disabled = true;
+            try {
+                const provider = new fbModules.GoogleAuthProvider();
+                await fbModules.signInWithPopup(auth, provider);
+                if (!isTrustedTeacher(auth.currentUser)) {
+                    await fbModules.signOut(auth);
+                    await fbModules.signInAnonymously(auth);
+                    currentUser = auth.currentUser;
+                    adminUnlocked = false;
+                    startCloudSubscriptions();
+                    showToast('⚠️ 此帳號沒有教師管理權限');
+                    return;
+                }
+                currentUser = auth.currentUser;
+                adminUnlocked = true;
+                document.getElementById('adminUserIdDisplay').textContent = currentUser.email;
+                startCloudSubscriptions();
+                document.getElementById('teacherAuthView').classList.add('hidden');
+                document.getElementById('teacherAuthView').classList.remove('flex');
+                adminDashView.classList.remove('hidden');
+                adminDashView.classList.add('flex');
+                switchAdminTab('pending');
+                renderAdminPanels();
+                showToast('✅ 教師身分已驗證，作品即時更新中');
+            } catch (err) {
+                console.error('教師登入失敗:', err);
+                showToast('⚠️ 教師登入失敗，請檢查 Google 登入設定');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function lockTeacherAdmin() {
+            adminUnlocked = false;
+            closeAdminModal();
+            if (cloudReady && auth && fbModules && isTrustedTeacher(currentUser)) {
+                try {
+                    await fbModules.signOut(auth);
+                    await fbModules.signInAnonymously(auth);
+                    currentUser = auth.currentUser;
+                    document.getElementById('adminUserIdDisplay').textContent = currentUser.uid;
+                    startCloudSubscriptions();
+                } catch (err) {
+                    console.error('教師登出失敗:', err);
+                }
+            }
+            showToast('🔒 教師後台已鎖定');
+        }
+
+        function drawMiniThumbnail(canvasEl, art) {
+            const tCtx = canvasEl.getContext('2d');
+            const s = canvasEl.width;
+            tCtx.clearRect(0, 0, s, s);
+            tCtx.save();
+            tCtx.translate(s * 0.5, s * 0.5);
+            tCtx.scale((s * 0.42) / 100, (s * 0.42) / 100);
+            traceShapePath(tCtx, art.shape);
+            tCtx.fillStyle = art.color;
+            tCtx.fill();
+
+            tCtx.strokeStyle = STROKE_COLOR;
+            tCtx.lineCap = 'round';
+            tCtx.lineJoin = 'round';
+            for (const st of art.strokes) {
+                const pts = st.points;
+                if (!pts || !pts.length) continue;
+                tCtx.lineWidth = Math.max(5, st.width || 5);
+                tCtx.beginPath();
+                tCtx.moveTo(pts[0].x, pts[0].y);
+                for (let i = 1; i < pts.length; i++) tCtx.lineTo(pts[i].x, pts[i].y);
+                tCtx.stroke();
+            }
+            tCtx.restore();
+        }
+
+        function renderAdminPanels() {
+            renderPendingList();
+            renderApprovedList();
+        }
+
+        function renderPendingList() {
+            const listEl = document.getElementById('adminPendingList');
+            const pendingArts = cloudArtworks.filter(a => a.status === 'pending');
+            listEl.innerHTML = '';
+
+            if (pendingArts.length === 0) {
+                listEl.innerHTML = `<div class="text-center py-6 text-xs text-[#faf4e6]/50">🎉 目前沒有待審核的作品！<br>學生掃碼畫完送出後，會即時出現在這裡喔。</div>`;
+                return;
+            }
+
+            pendingArts.forEach(art => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-2.5 bg-[#11443a] p-2.5 rounded-xl border border-[#f3ca5f]/25';
+
+                const left = document.createElement('div');
+                left.className = 'flex items-center gap-2.5 min-w-0';
+
+                const thumb = document.createElement('canvas');
+                thumb.width = 52;
+                thumb.height = 52;
+                thumb.className = 'w-12 h-12 rounded-xl bg-[#0c332c] shrink-0';
+                drawMiniThumbnail(thumb, art);
+
+                const info = document.createElement('div');
+                info.className = 'min-w-0';
+                info.innerHTML = `<p class="text-xs font-bold text-[#faf4e6] truncate">${art.author.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
+                                  <p class="text-[10px] text-[#f3ca5f]">⏳ 等待放行・${art.strokes.length} 筆</p>`;
+
+                left.appendChild(thumb);
+                left.appendChild(info);
+
+                const actions = document.createElement('div');
+                actions.className = 'flex items-center gap-1.5 shrink-0';
+
+                const okBtn = document.createElement('button');
+                okBtn.className = 'btn-pill px-2.5 py-1.5 rounded-lg bg-[#5BA383] hover:bg-[#6ab896] text-[#0e3a32] text-[11px] font-black';
+                okBtn.textContent = '✅ 放行';
+                okBtn.addEventListener('click', () => approveArtwork(art.docId));
+
+                const rejectBtn = document.createElement('button');
+                rejectBtn.className = 'btn-pill px-2.5 py-1.5 rounded-lg bg-[#DE4753]/25 hover:bg-[#DE4753]/45 text-[#ff9aa2] text-[11px] font-bold';
+                rejectBtn.textContent = '❌ 退回';
+                rejectBtn.addEventListener('click', () => deleteCloudArtwork(art.docId, '已退回該件作品'));
+
+                actions.appendChild(okBtn);
+                actions.appendChild(rejectBtn);
+                row.appendChild(left);
+                row.appendChild(actions);
+                listEl.appendChild(row);
+            });
+        }
+
+        function renderApprovedList() {
+            const listEl = document.getElementById('adminArtList');
+            const approvedArts = cloudArtworks.filter(a => a.status === 'approved');
+            listEl.innerHTML = '';
+
+            if (approvedArts.length === 0) {
+                listEl.innerHTML = `<div class="text-center py-6 text-xs text-[#faf4e6]/50">目前牆上還沒有學生作品喔！</div>`;
+                return;
+            }
+
+            approvedArts.forEach(art => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-2.5 bg-[#11443a] p-2 rounded-xl border border-white/10';
+
+                const left = document.createElement('div');
+                left.className = 'flex items-center gap-2.5 min-w-0';
+
+                const thumb = document.createElement('canvas');
+                thumb.width = 48;
+                thumb.height = 48;
+                thumb.className = 'w-11 h-11 rounded-lg bg-[#0c332c] shrink-0';
+                drawMiniThumbnail(thumb, art);
+
+                const info = document.createElement('div');
+                info.className = 'min-w-0';
+                info.innerHTML = `<p class="text-xs font-bold text-[#faf4e6] truncate">${art.author.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
+                                  <p class="text-[10px] text-[#faf4e6]/55">已上牆・${art.strokes.length} 筆</p>`;
+
+                left.appendChild(thumb);
+                left.appendChild(info);
+
+                const actions = document.createElement('div');
+                actions.className = 'flex items-center gap-1.5 shrink-0';
+
+                const playBtn = document.createElement('button');
+                playBtn.className = 'btn-pill px-2.5 py-1.5 rounded-lg bg-[#f3ca5f]/20 hover:bg-[#f3ca5f]/35 text-[#f3ca5f] text-[11px] font-bold';
+                playBtn.textContent = '✨ 播映';
+                playBtn.addEventListener('click', () => triggerRemoteSpotlight(art.docId));
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'btn-pill px-2.5 py-1.5 rounded-lg bg-[#DE4753]/25 hover:bg-[#DE4753]/45 text-[#ff9aa2] text-[11px] font-bold';
+                delBtn.textContent = '🗑️ 下架';
+                delBtn.addEventListener('click', () => deleteCloudArtwork(art.docId, '🗑️ 已從所有螢幕下架該作品'));
+
+                actions.appendChild(playBtn);
+                actions.appendChild(delBtn);
+                row.appendChild(left);
+                row.appendChild(actions);
+                listEl.appendChild(row);
+            });
+        }
+
+        async function approveArtwork(docId) {
+            if (cloudReady && currentUser && fbModules) {
+                try {
+                    await fbModules.updateDoc(fbModules.doc(db, 'artifacts', appId, 'public', 'data', 'artworks', docId), {
+                        status: 'approved'
+                    });
+                    showToast('✅ 已放行！作品正在飛向大螢幕');
+                } catch (e) {
+                    showToast('⚠️ 放行失敗，請再試一次');
+                }
+            } else {
+                const item = cloudArtworks.find(a => a.docId === docId);
+                if (item) {
+                    item.status = 'approved';
+                    syncApprovedArtworksToWall();
+                    updatePendingBadges();
+                    renderAdminPanels();
+                    showToast('✅ 已放行上牆！');
+                }
+            }
+        }
+
+        async function triggerRemoteSpotlight(docId) {
+            if (cloudReady && currentUser && fbModules) {
+                await updateCloudSettings({ featuredArtId: docId, featuredAt: Date.now() });
+                showToast('✨ 已遙控教室大螢幕放大重播該作品！');
+            } else {
+                const orn = ornaments.find(o => o.uid === docId);
+                if (orn) {
+                    closeAdminModal();
+                    startShowcase(orn.id);
+                }
+            }
+        }
+
+        async function deleteCloudArtwork(docId, msg = '🗑️ 已移除作品') {
+            if (cloudReady && currentUser && fbModules) {
+                try {
+                    await fbModules.deleteDoc(fbModules.doc(db, 'artifacts', appId, 'public', 'data', 'artworks', docId));
+                    showToast(msg);
+                } catch (e) {
+                    showToast('⚠️ 刪除失敗，請再試一次');
+                }
+            } else {
+                cloudArtworks = cloudArtworks.filter(a => a.docId !== docId);
+                syncApprovedArtworksToWall();
+                updatePendingBadges();
+                renderAdminPanels();
+                showToast(msg);
+            }
+        }
+
+        function resetClearConfirmBtn() {
+            clearConfirmArmed = false;
+            clearTimeout(clearConfirmTimer);
+            const btn = document.getElementById('clearAllStudentBtn');
+            btn.textContent = '🗑️ 清空雲端作品';
+            btn.classList.remove('bg-[#DE4753]', 'text-white');
+        }
+
+        function copyStudentJoinLink() {
+            const url = getStudentJoinUrl();
+            const tempInput = document.createElement('textarea');
+            tempInput.value = url;
+            tempInput.style.position = 'fixed';
+            tempInput.style.opacity = '0';
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            try {
+                document.execCommand('copy');
+                showToast('🔗 已複製學生畫畫連結！可貼到班級群組或平板');
+            } catch (e) {
+                showToast('⚠️ 複製失敗，請手動複製學生畫畫網址');
+            }
+            document.body.removeChild(tempInput);
+        }
+
+        // 一鍵下載全班聖誕塗鴉牆合照 (.png)
+        function downloadWallSnapshot() {
+            const snap = document.createElement('canvas');
+            snap.width = wallCanvas.width;
+            snap.height = wallCanvas.height;
+            const sCtx = snap.getContext('2d');
+            sCtx.drawImage(wallCanvas, 0, 0);
+
+            // 疊加 Merry Christmas 手寫體與班級標題
+            sCtx.save();
+            sCtx.scale(dpr, dpr);
+            sCtx.textAlign = 'center';
+            sCtx.fillStyle = '#faf4e6';
+            sCtx.shadowColor = 'rgba(0,0,0,0.4)';
+            sCtx.shadowBlur = 14;
+            sCtx.font = `${Math.min(54, wallW * 0.08)}px Pacifico, cursive`;
+            sCtx.fillText('Merry Christmas', wallW * 0.5, 68);
+
+            const subText = document.getElementById('subTitle').textContent.trim();
+            if (subText) {
+                sCtx.fillStyle = '#f3ca5f';
+                sCtx.font = 'bold 18px "Zen Maru Gothic", sans-serif';
+                sCtx.fillText(subText, wallW * 0.5, 100);
+            }
+            sCtx.restore();
+
+            const link = document.createElement('a');
+            link.download = `MerryChristmas_ArtWall_${new Date().toISOString().slice(0, 10)}.png`;
+            link.href = snap.toDataURL('image/png');
+            link.click();
+            showToast('📸 已下載全班聖誕牆合照！');
+        }
+
+        // 輕提示系統（絕不使用 alert）
+        let toastTimer = null;
+        function showToast(msg) {
+            const box = document.getElementById('toastBox');
+            document.getElementById('toastMsg').textContent = (!isAdminOpen || isStudentDrawMode)
+                ? publicEnglishText(msg, '✨ Christmas Art Wall')
+                : msg;
+            box.classList.remove('opacity-0', '-translate-y-2');
+            box.classList.add('opacity-100', 'translate-y-0');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                box.classList.add('opacity-0', '-translate-y-2');
+                box.classList.remove('opacity-100', 'translate-y-0');
+            }, 2800);
+        }
+
+        // ============================================================
+        // 🎛️ 所有按鈕事件綁定
+        // ============================================================
+        document.getElementById('openStudioBtn').addEventListener('click', openStudio);
+        document.getElementById('closeStudioBtn').addEventListener('click', closeStudio);
+        document.getElementById('undoStrokeBtn').addEventListener('click', () => {
+            userStrokes.pop();
+            renderDrawCanvas();
+        });
+        document.getElementById('clearStrokeBtn').addEventListener('click', () => {
+            userStrokes = [];
+            renderDrawCanvas();
+        });
+        document.getElementById('submitArtBtn').addEventListener('click', submitUserArtwork);
+
+        document.getElementById('nextShowBtn').addEventListener('click', () => {
+            initAudio();
+            startShowcase();
+        });
+
+        document.getElementById('loopToggleBtn').addEventListener('click', () => {
+            autoLoopEnabled = !autoLoopEnabled;
+            document.getElementById('loopIcon').textContent = autoLoopEnabled ? '🔁' : '⏸️';
+            document.getElementById('loopLabel').textContent = autoLoopEnabled ? 'Auto Play' : 'Paused';
+            showToast(autoLoopEnabled ? '🔁 Auto play is on.' : '⏸️ Auto play is paused.');
+        });
+
+        document.getElementById('musicBtn').addEventListener('click', () => {
+            initAudio();
+            if (!audioReady) return;
+            musicPlaying = !musicPlaying;
+            if (musicPlaying) {
+                Tone.Transport.start();
+                musicPart.start(0);
+                document.getElementById('musicIcon').textContent = '🎵';
+                showToast('🎵 Christmas music is playing.');
+            } else {
+                Tone.Transport.pause();
+                document.getElementById('musicIcon').textContent = '🔇';
+                showToast('🔇 Christmas music is paused.');
+            }
+        });
+
+        document.getElementById('toggleUiBtn').addEventListener('click', () => {
+            uiHidden = !uiHidden;
+            document.getElementById('bottomDock').classList.toggle('opacity-0', uiHidden);
+            document.getElementById('bottomDock').classList.toggle('pointer-events-none', uiHidden);
+            document.getElementById('countBadge').classList.toggle('opacity-0', uiHidden);
+            document.getElementById('toggleUiIcon').textContent = uiHidden ? '🙈' : '👁️';
+            showToast(uiHidden ? '✨ Exhibition view is on.' : '👁️ Controls are visible again.');
+        });
+
+        // 教師後台事件綁定
+        document.getElementById('adminBtn').addEventListener('click', openAdminModal);
+        document.getElementById('teacherGoogleSignInBtn').addEventListener('click', signInTeacherWithGoogle);
+        document.getElementById('closeAdminBtn').addEventListener('click', closeAdminModal);
+        document.getElementById('unlockAdminBtn').addEventListener('click', unlockAdmin);
+        adminPinInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') unlockAdmin();
+        });
+        document.getElementById('lockAdminBtn').addEventListener('click', lockTeacherAdmin);
+
+        document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => switchAdminTab(btn.dataset.tab));
+        });
+
+        document.getElementById('copyStudentLinkBtn').addEventListener('click', copyStudentJoinLink);
+
+        document.getElementById('approveAllBtn').addEventListener('click', async () => {
+            const pendingArts = cloudArtworks.filter(a => a.status === 'pending');
+            if (pendingArts.length === 0) {
+                showToast('目前沒有待審核的作品喔！');
+                return;
+            }
+            for (const art of pendingArts) {
+                await approveArtwork(art.docId);
+            }
+            showToast(`✅ 已一次放行 ${pendingArts.length} 件作品上牆！`);
+        });
+
+        document.getElementById('saveSubtitleBtn').addEventListener('click', () => {
+            const val = document.getElementById('classSubtitleInput').value.trim();
+            if (/[\u3400-\u9fff\uf900-\ufaff]/u.test(val)) {
+                showToast('⚠️ 首頁只顯示英文，請輸入英文班級標題');
+                return;
+            }
+            const subEl = document.getElementById('subTitle');
+            subEl.textContent = val;
+            subEl.classList.toggle('hidden', !val);
+            updateCloudSettings({ subtitle: val });
+            showToast(val ? '✅ 班級標題已同步更新' : '✅ 已隱藏班級副標題');
+        });
+
+        document.querySelectorAll('input[name="approvalMode"]').forEach(input => {
+            input.addEventListener('change', async (e) => {
+                if (!e.target.checked || isStudentDrawMode || !adminUnlocked) return;
+                const previousMode = requireApproval;
+                requireApproval = e.target.value === 'review';
+                updateApprovalModeUI();
+                const ok = await updateCloudSettings({ requireApproval });
+                if (!ok) {
+                    requireApproval = previousMode;
+                    updateApprovalModeUI();
+                    showToast('⚠️ 模式切換未成功');
+                    return;
+                }
+                showToast(requireApproval ? '🛡️ 已切換：教師審核後放行' : '⚡ 已切換：全部作品自動放行');
+            });
+        });
+
+        document.getElementById('toggleAllowDraw').addEventListener('change', (e) => {
+            allowDrawing = e.target.checked;
+            document.getElementById('openStudioBtn').classList.toggle('hidden', !allowDrawing);
+            updateCloudSettings({ allowDrawing });
+            showToast(allowDrawing ? '🖍️ 已開放所有學生裝置畫畫' : '🔒 已鎖定所有學生裝置（純展示模式）');
+        });
+
+        document.getElementById('toggleShowPresets').addEventListener('change', (e) => {
+            showPresets = e.target.checked;
+            if (!showPresets && showcase.targetId !== null) {
+                const current = ornaments.find(o => o.id === showcase.targetId);
+                if (current && !current.isUserCreated) {
+                    showcase.state = 'IDLE';
+                    showcase.targetId = null;
+                    hideSpotlightBadge();
+                }
+            }
+            updateArtworkCounter();
+            updateCloudSettings({ showPresets });
+            showToast(showPresets ? '✨ 已顯示內建範例圖與學生作品' : '🎨 已切換為「純學生作品牆」模式');
+        });
+
+        document.querySelectorAll('.speed-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                showcaseSpeedMultiplier = parseFloat(btn.dataset.speed);
+                document.querySelectorAll('.speed-btn').forEach(b => {
+                    b.className = 'speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white/10 text-[#faf4e6]/80';
+                });
+                btn.className = 'speed-btn px-2.5 py-1 rounded-lg text-[11px] font-bold bg-[#f3ca5f] text-[#0e3a32]';
+                updateCloudSettings({ speed: showcaseSpeedMultiplier });
+                showToast('⏱️ 已同步調整逐筆重播速度');
+            });
+        });
+
+        document.getElementById('clearAllStudentBtn').addEventListener('click', async () => {
+            const approvedArts = cloudArtworks.filter(a => a.status === 'approved');
+            if (approvedArts.length === 0) {
+                showToast('目前沒有可清空的學生作品喔！');
+                return;
+            }
+            if (!clearConfirmArmed) {
+                clearConfirmArmed = true;
+                const btn = document.getElementById('clearAllStudentBtn');
+                btn.textContent = '⚠️ 確定清空？再點一次';
+                btn.classList.add('bg-[#DE4753]', 'text-white');
+                clearConfirmTimer = setTimeout(resetClearConfirmBtn, 4000);
+            } else {
+                for (const art of approvedArts) {
+                    await deleteCloudArtwork(art.docId);
+                }
+                resetClearConfirmBtn();
+                showToast('🧹 已清空全部雲端學生作品');
+            }
+        });
+
+        document.getElementById('downloadSnapshotBtn').addEventListener('click', downloadWallSnapshot);
+        document.getElementById('studentDrawAgainBtn').addEventListener('click', openStudio);
+        document.getElementById('studentViewWallBtn').addEventListener('click', () => {
+            hideStudentStatus();
+            if (isStudentDrawMode && allowDrawing) {
+                document.getElementById('studentReturnToStudioBtn').classList.remove('hidden');
+            }
+        });
+        document.getElementById('studentReturnToStudioBtn').addEventListener('click', openStudio);
+
+        // 啟動整個多裝置互動塗鴉牆！
+        function bootApp() {
+            if (isStudentDrawMode) {
+                document.getElementById('authorInput').placeholder = 'Your name (optional)';
+                document.getElementById('submitArtBtnText').textContent = '✨ Submit My Decoration';
+            }
+            updateApprovalModeUI();
+            createPaperGrain();
+            buildStudioControls();
+            resizeWall();
+            initOrnaments();
+            initCloudSync();
+            requestAnimationFrame(animateLoop);
+
+            if (isStudentDrawMode) {
+                setTimeout(() => {
+                    if (allowDrawing) openStudio();
+                }, 350);
+            }
+        }
+
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            bootApp();
+        } else {
+            window.addEventListener('load', bootApp);
+        }
+    </script>
+</body>
+</html>
