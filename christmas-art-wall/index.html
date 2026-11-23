@@ -13,9 +13,17 @@
         // 正式部署時填入 Firebase Web App 設定與可登入的教師 Google 信箱。
         // 本機未設定 Firebase 時，只提供教師單機預覽；學生無法跨裝置送出。
         window.CHRISTMAS_WALL_CONFIG = {
-            firebase: null,
-            teacherEmail: '',
-            wallId: null // 若原始執行環境有 __app_id，保留既有教室 ID；正式部署可自訂。
+            firebase: {
+                apiKey: "AIzaSyAmXm_Iz1Fr5rT46LUsSGlfbgbLPQiU3NA",
+                authDomain: "paiyun-christmas-art-wal.firebaseapp.com",
+                projectId: "paiyun-christmas-art-wal",
+                storageBucket: "paiyun-christmas-art-wal.firebasestorage.app",
+                messagingSenderId: "459903031100",
+                appId: "1:459903031100:web:f036afd140ec2aa2bdb039",
+                measurementId: "G-6439LSHR65"
+            },
+            teacherEmail: '', // Complete after teacher Google account is confirmed.
+            wallId: 'paiyun-christmas-art-wall-2026'
         };
     </script>
     <!-- 載入 Tailwind CSS -->
