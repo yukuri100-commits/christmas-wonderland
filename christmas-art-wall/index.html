@@ -134,6 +134,54 @@
         html.student-mode #closeStudioBtn { display: none !important; }
 
         html.student-mode #studioModal { background: rgba(9, 41, 35, 0.88); }
+
+        /* Wide drawing studio: tools on the left, large pen canvas on the right. */
+        .studio-workspace {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-areas:
+                "shapes"
+                "canvas"
+                "tools"
+                "author"
+                "submit";
+            gap: 12px;
+            align-items: start;
+            min-width: 0;
+        }
+        .studio-shapes { grid-area: shapes; min-width: 0; }
+        .studio-tools { grid-area: tools; min-width: 0; }
+        .studio-author { grid-area: author; min-width: 0; }
+        .studio-submit { grid-area: submit; min-width: 0; }
+        .studio-canvas-stage {
+            grid-area: canvas;
+            width: min(100%, 62dvh);
+            aspect-ratio: 1 / 1;
+            min-width: 0;
+            justify-self: center;
+            align-self: center;
+        }
+        .studio-canvas-stage canvas { width: 100%; height: 100%; }
+        @media (min-width: 900px) {
+            .studio-workspace {
+                grid-template-columns: minmax(285px, 340px) minmax(0, 1fr);
+                grid-template-areas:
+                    "shapes canvas"
+                    "tools canvas"
+                    "author canvas"
+                    "submit canvas";
+                grid-template-rows: auto auto auto minmax(0, 1fr);
+                column-gap: clamp(16px, 2.2vw, 30px);
+                row-gap: 16px;
+            }
+            .studio-canvas-stage {
+                width: min(100%, calc(94dvh - 120px));
+            }
+            .studio-submit { align-self: end; }
+        }
+        @media (max-width: 899px) {
+            .studio-canvas-stage { max-width: 100%; }
+        }
     </style>
 </head>
 <body class="relative w-full h-full overflow-hidden">
@@ -198,7 +246,7 @@
     <!-- 🖍️ 現場手繪創作室（平板 / 手機塗鴉模式） -->
     <!-- ========================================== -->
     <div id="studioModal" class="fixed inset-0 z-30 hidden items-center justify-center p-3 sm:p-5 bg-black/65 backdrop-blur-md">
-        <div class="modal-animate relative w-full max-w-md bg-[#11443a] border-2 border-[#faf4e6]/25 rounded-[2rem] shadow-2xl p-4 sm:p-5 flex flex-col gap-3.5 max-h-[95vh] overflow-y-auto no-scrollbar">
+        <div class="modal-animate relative w-full max-w-[1300px] bg-[#11443a] border-2 border-[#faf4e6]/25 rounded-[2rem] shadow-2xl p-3 sm:p-5 flex flex-col gap-3 max-h-[96dvh] overflow-y-auto no-scrollbar">
 
             <!-- 標題列 -->
             <div class="flex items-center justify-between">
@@ -212,52 +260,69 @@
                 <button id="closeStudioBtn" class="btn-pill w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#faf4e6] font-bold">✕</button>
             </div>
 
-            <!-- 1. 造型選擇列（8 種手繪聖誕造型） -->
-            <div id="shapePicker" class="grid grid-cols-4 gap-2 py-1" aria-label="Choose a shape">
-                <!-- 由 JS 動態產生 -->
-            </div>
+            <!-- Responsive studio: choose tools at left, draw larger at right on wide screens. -->
+            <div id="studioWorkspace" class="studio-workspace">
+                <section class="studio-shapes rounded-2xl bg-[#0c332c]/75 border border-white/10 p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-xs font-black text-[#f3ca5f] tracking-wide">Choose a Shape</h3>
+                        <span class="text-[10px] text-[#faf4e6]/60">8 decorations</span>
+                    </div>
+                    <div id="shapePicker" class="grid grid-cols-4 gap-2" aria-label="Choose a shape">
+                        <!-- All eight choices are visible without scrolling. -->
+                    </div>
+                </section>
 
-            <!-- 2. 互動塗鴉畫布容器 -->
-            <div class="relative w-full aspect-square max-h-[42vh] mx-auto rounded-[1.75rem] bg-[#0b312a] border-2 border-[#faf4e6]/15 overflow-hidden shadow-inner flex items-center justify-center">
-                <canvas id="drawCanvas"></canvas>
-                <!-- 畫布內浮動小工具（復原 / 清空） -->
-                <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5">
-                    <button id="undoStrokeBtn" title="Undo the last stroke" class="btn-pill px-2.5 py-1.5 rounded-xl bg-[#11443a]/90 border border-white/15 text-xs font-bold text-[#faf4e6]">↩️ Undo</button>
-                    <button id="clearStrokeBtn" title="Clear all strokes" class="btn-pill px-2.5 py-1.5 rounded-xl bg-[#11443a]/90 border border-white/15 text-xs font-bold text-[#ff9aa2]">🧹 Clear</button>
+                <!-- Dedicated large square drawing stage (responsive for pen, touch, mouse). -->
+                <div id="drawStage" class="studio-canvas-stage relative rounded-[1.75rem] bg-[#0b312a] border-2 border-[#faf4e6]/15 overflow-hidden shadow-inner flex items-center justify-center">
+                    <canvas id="drawCanvas" aria-label="Draw on your Christmas decoration"></canvas>
+                    <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+                        <button id="undoStrokeBtn" title="Undo the last stroke" class="btn-pill px-2.5 py-1.5 rounded-xl bg-[#11443a]/90 border border-white/15 text-xs font-bold text-[#faf4e6]">↩️ Undo</button>
+                        <button id="clearStrokeBtn" title="Clear all strokes" class="btn-pill px-2.5 py-1.5 rounded-xl bg-[#11443a]/90 border border-white/15 text-xs font-bold text-[#ff9aa2]">🧹 Clear</button>
+                    </div>
+                    <p id="drawHint" class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 text-[11px] font-bold text-[#faf4e6]/55 bg-[#0e3a32]/75 px-3 py-1 rounded-full whitespace-nowrap">
+                        ✏️ Draw with your pen, finger or mouse
+                    </p>
                 </div>
-                <p id="drawHint" class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 text-[11px] font-bold text-[#faf4e6]/55 bg-[#0e3a32]/75 px-3 py-1 rounded-full whitespace-nowrap">
-                    ✏️ Draw patterns with your finger or mouse
-                </p>
-            </div>
 
-            <!-- 3. 底色與筆觸粗細列 -->
-            <div class="flex items-center justify-between gap-2 bg-[#0c332c] px-3.5 py-2.5 rounded-2xl border border-white/10">
-                <div id="colorPicker" class="flex items-center gap-2.5">
-                    <!-- 由 JS 動態產生 4 種韓系霧面撞色 -->
+                <section class="studio-tools rounded-2xl bg-[#0c332c] border border-white/10 p-3 flex flex-col gap-3">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs font-bold text-[#faf4e6]">Color</span>
+                        <div id="colorPicker" class="flex items-center gap-3">
+                            <!-- Populated by JS. -->
+                        </div>
+                    </div>
+                    <div class="h-px bg-white/10"></div>
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs font-bold text-[#faf4e6]">Pen Size</span>
+                        <div id="brushPicker" class="flex items-center gap-1.5">
+                            <button data-width="2" title="Extra-fine pen" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
+                                <span class="w-1 h-1 rounded-full bg-[#faf4e6]"></span>
+                            </button>
+                            <button data-width="4" title="Thin pen" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
+                                <span class="w-1.5 h-1.5 rounded-full bg-[#faf4e6]"></span>
+                            </button>
+                            <button data-width="7" title="Medium pen" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-[#f3ca5f] ring-2 ring-[#faf4e6]">
+                                <span class="w-2.5 h-2.5 rounded-full bg-[#0e3a32]"></span>
+                            </button>
+                            <button data-width="11" title="Thick pen" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
+                                <span class="w-3.5 h-3.5 rounded-full bg-[#faf4e6]"></span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="studio-author">
+                    <input id="authorInput" type="text" maxlength="20" placeholder="Your name (optional)"
+                        class="w-full px-4 py-3 rounded-2xl bg-[#0c332c] border border-white/15 text-sm text-[#faf4e6] placeholder-[#faf4e6]/45 focus:outline-none focus:border-[#f3ca5f]">
                 </div>
-                <div class="h-6 w-[1px] bg-white/15"></div>
-                <div id="brushPicker" class="flex items-center gap-1.5">
-                    <button data-width="4" title="Thin brush" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
-                        <span class="w-1.5 h-1.5 rounded-full bg-[#faf4e6]"></span>
+
+                <div class="studio-submit flex flex-col gap-2">
+                    <button id="submitArtBtn" class="btn-pill w-full py-3.5 rounded-2xl font-black text-base text-[#0e3a32] bg-gradient-to-r from-[#f3ca5f] to-[#f8d777] shadow-lg shadow-amber-400/20 flex items-center justify-center gap-2">
+                        <span id="submitArtBtnText">✨ Submit My Decoration</span>
                     </button>
-                    <button data-width="7" title="Medium brush" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-[#f3ca5f] ring-2 ring-[#faf4e6]">
-                        <span class="w-2.5 h-2.5 rounded-full bg-[#0e3a32]"></span>
-                    </button>
-                    <button data-width="11" title="Thick brush" class="brush-btn w-8 h-8 rounded-full flex items-center justify-center bg-white/10">
-                        <span class="w-3.5 h-3.5 rounded-full bg-[#faf4e6]"></span>
-                    </button>
+                    <p id="submitStatusMsg" role="status" aria-live="polite" class="hidden text-center text-xs font-bold leading-relaxed px-2"></p>
                 </div>
             </div>
-
-            <!-- 4. 作者署名 / 祝福語 -->
-            <input id="authorInput" type="text" maxlength="20" placeholder="Your name (optional)"
-                class="w-full px-4 py-2.5 rounded-2xl bg-[#0c332c] border border-white/15 text-sm text-[#faf4e6] placeholder-[#faf4e6]/45 focus:outline-none focus:border-[#f3ca5f]">
-
-            <!-- 5. 送出按鈕 -->
-            <button id="submitArtBtn" class="btn-pill w-full py-3.5 rounded-2xl font-black text-base text-[#0e3a32] bg-gradient-to-r from-[#f3ca5f] to-[#f8d777] shadow-lg shadow-amber-400/20 flex items-center justify-center gap-2">
-                <span id="submitArtBtnText">✨ Submit My Decoration</span>
-            </button>
-            <p id="submitStatusMsg" role="status" aria-live="polite" class="hidden text-center text-xs font-bold leading-relaxed px-2"></p>
         </div>
     </div>
 
@@ -1468,7 +1533,7 @@
         function resizeDrawCanvas() {
             const box = drawCanvas.parentElement;
             const rect = box.getBoundingClientRect();
-            const size = Math.max(220, Math.floor(Math.min(rect.width, rect.height)));
+            const size = Math.max(1, Math.floor(Math.min(rect.width, rect.height)));
             const ratio = Math.min(window.devicePixelRatio || 1, 2);
             drawCanvas.width = size * ratio;
             drawCanvas.height = size * ratio;
@@ -1551,12 +1616,18 @@
         drawCanvas.addEventListener('pointermove', (e) => {
             if (!isDrawing || !activeStroke) return;
             e.preventDefault();
-            const pt = getLocalDrawPoint(e);
-            const last = activeStroke.points[activeStroke.points.length - 1];
-            if (Math.hypot(pt.x - last.x, pt.y - last.y) >= 2.2) {
-                activeStroke.points.push(pt);
-                renderDrawCanvas();
+            const events = typeof e.getCoalescedEvents === 'function'
+                ? e.getCoalescedEvents() : [e];
+            let updated = false;
+            for (const event of events.length ? events : [e]) {
+                const pt = getLocalDrawPoint(event);
+                const last = activeStroke.points[activeStroke.points.length - 1];
+                if (Math.hypot(pt.x - last.x, pt.y - last.y) >= 0.85) {
+                    activeStroke.points.push(pt);
+                    updated = true;
+                }
             }
+            if (updated) renderDrawCanvas();
         });
 
         function finishStroke() {
@@ -1589,6 +1660,16 @@
             studioModal.classList.remove('hidden');
             studioModal.classList.add('flex');
             requestAnimationFrame(() => resizeDrawCanvas());
+        }
+
+        window.addEventListener('resize', () => {
+            if (isStudioOpen) requestAnimationFrame(resizeDrawCanvas);
+        });
+        if (typeof ResizeObserver !== 'undefined') {
+            const drawStageObserver = new ResizeObserver(() => {
+                if (isStudioOpen) requestAnimationFrame(resizeDrawCanvas);
+            });
+            drawStageObserver.observe(document.getElementById('drawStage'));
         }
 
         function closeStudio() {
