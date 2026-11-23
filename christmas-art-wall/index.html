@@ -130,8 +130,22 @@
         html.student-mode #countBadge,
         html.student-mode #bottomDock,
         html.student-mode #adminModal,
-        html.student-mode #spotlightBadge,
         html.student-mode #closeStudioBtn { display: none !important; }
+
+        /* Student artwork names are public content, not teacher/admin information.
+           Show the author badge after a student taps an ornament. */
+        html.student-mode #spotlightBadge {
+            bottom: clamp(84px, 10.5vh, 116px) !important;
+            z-index: 22;
+            max-width: calc(100vw - 24px);
+        }
+        html.student-mode #spotlightBadge .pine-glass {
+            max-width: 100%;
+            padding: 7px 14px;
+            font-size: 13px;
+            text-align: center;
+            overflow-wrap: anywhere;
+        }
 
         html.student-mode #studioModal { background: rgba(9, 41, 35, 0.88); }
 
@@ -1044,9 +1058,14 @@
             return /[\u3400-\u9fff\uf900-\ufaff]/u.test(text) ? fallback : (text || fallback);
         }
 
-        function showSpotlightBadge(text) {
+        function showSpotlightBadge(text, isUserCreated = false) {
             const badge = document.getElementById('spotlightBadge');
-            document.getElementById('badgeText').textContent = publicEnglishText(text);
+            const rawName = String(text || '').trim();
+            // Keep the fixed exhibition UI in English, but display the actual
+            // student-entered name (including Chinese) on their own artwork.
+            document.getElementById('badgeText').textContent = isUserCreated
+                ? (rawName || '🖍️ Student Artist')
+                : publicEnglishText(rawName);
             badge.classList.remove('opacity-0', 'translate-y-4');
             badge.classList.add('opacity-100', 'translate-y-0');
         }
@@ -1077,7 +1096,7 @@
             showcase.replayPointsDrawn = 0;
             showcase.totalPoints = chosen.totalPoints;
             showcase.timer = 0.72;
-            showSpotlightBadge(chosen.author);
+            showSpotlightBadge(chosen.author, chosen.isUserCreated);
             playChime('spotlight');
         }
 
