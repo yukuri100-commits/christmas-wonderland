@@ -213,7 +213,7 @@
             </div>
 
             <!-- 1. 造型選擇列（8 種手繪聖誕造型） -->
-            <div id="shapePicker" class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            <div id="shapePicker" class="grid grid-cols-4 gap-2 py-1" aria-label="Choose a shape">
                 <!-- 由 JS 動態產生 -->
             </div>
 
@@ -257,6 +257,7 @@
             <button id="submitArtBtn" class="btn-pill w-full py-3.5 rounded-2xl font-black text-base text-[#0e3a32] bg-gradient-to-r from-[#f3ca5f] to-[#f8d777] shadow-lg shadow-amber-400/20 flex items-center justify-center gap-2">
                 <span id="submitArtBtnText">✨ Submit My Decoration</span>
             </button>
+            <p id="submitStatusMsg" role="status" aria-live="polite" class="hidden text-center text-xs font-bold leading-relaxed px-2"></p>
         </div>
     </div>
 
@@ -547,6 +548,9 @@
         const TEACHER_EMAIL = (wallConfig.teacherEmail || '').trim().toLowerCase();
         const isStudentDrawMode = new URLSearchParams(window.location.search).get('mode') === 'draw';
         let cloudSettingsLoaded = false;
+        let cloudSettingsError = null;
+        let cloudArtworksError = null;
+        let submissionPending = false;
         let unsubscribeArtworks = null;
         let unsubscribeSettings = null;
         function isTrustedTeacher(user) {
@@ -1404,8 +1408,8 @@
             SHAPES.forEach(sh => {
                 const btn = document.createElement('button');
                 btn.dataset.shape = sh.id;
-                btn.className = 'shape-btn btn-pill shrink-0 px-3 py-1.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border';
-                btn.innerHTML = `<span>${sh.icon}</span><span>${sh.label}</span>`;
+                btn.className = 'shape-btn btn-pill min-w-0 w-full min-h-[58px] px-1 py-1.5 rounded-xl text-[10px] sm:text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 border text-center leading-tight';
+                btn.innerHTML = `<span class="text-lg leading-none">${sh.icon}</span><span class="w-full leading-tight whitespace-normal break-words">${sh.label}</span>`;
                 btn.addEventListener('click', () => {
                     selectedShape = sh.id;
                     updateStudioPickerStyles();
@@ -1450,8 +1454,8 @@
             document.querySelectorAll('.shape-btn').forEach(btn => {
                 const active = btn.dataset.shape === selectedShape;
                 btn.className = active
-                    ? 'shape-btn btn-pill shrink-0 px-3 py-1.5 rounded-2xl text-xs font-black flex items-center gap-1.5 border bg-[#f3ca5f] text-[#0e3a32] border-[#f3ca5f]'
-                    : 'shape-btn btn-pill shrink-0 px-3 py-1.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border bg-[#0c332c] text-[#faf4e6]/85 border-white/15';
+                    ? 'shape-btn btn-pill min-w-0 w-full min-h-[58px] px-1 py-1.5 rounded-xl text-[10px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-0.5 border text-center leading-tight bg-[#f3ca5f] text-[#0e3a32] border-[#f3ca5f]'
+                    : 'shape-btn btn-pill min-w-0 w-full min-h-[58px] px-1 py-1.5 rounded-xl text-[10px] sm:text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 border text-center leading-tight bg-[#0c332c] text-[#faf4e6]/85 border-white/15';
             });
             document.querySelectorAll('.color-btn').forEach(btn => {
                 const active = btn.dataset.color === selectedColor;
@@ -1573,9 +1577,15 @@
             isStudioOpen = true;
             userStrokes = [];
             document.getElementById('authorInput').value = '';
-            document.getElementById('submitArtBtnText').textContent = isStudentDrawMode
-                ? '✨ Submit My Decoration'
-                : (requireApproval ? '✨ Submit My Decoration' : '✨ Submit My Decoration');
+            document.getElementById('submitArtBtnText').textContent = '✨ Submit My Decoration';
+            document.getElementById('submitArtBtn').disabled = false;
+            submissionPending = false;
+            setSubmitFeedback(
+                cloudSettingsError || cloudArtworksError
+                    ? '⚠️ Cloud storage is unavailable. Please ask your teacher to check Firebase.'
+                    : '',
+                'error'
+            );
             studioModal.classList.remove('hidden');
             studioModal.classList.add('flex');
             requestAnimationFrame(() => resizeDrawCanvas());
@@ -1666,6 +1676,7 @@
             unsubscribeArtworks = fbModules.onSnapshot(
                 queryRef,
                 (snapshot) => {
+                    cloudArtworksError = null;
                     const allDocs = [];
                     snapshot.forEach((docSnap) => {
                         const d = docSnap.data();
@@ -1699,8 +1710,12 @@
                     }
                 },
                 (err) => {
-                    console.error('監聽作品集合失敗:', err);
-                    if (!isStudentDrawMode) showToast('⚠️ 作品同步暫時中斷，請檢查連線');
+                    cloudArtworksError = err;
+                    console.error('Artwork sync error:', err);
+                    if (isStudioOpen) {
+                        setSubmitFeedback('⚠️ Cloud storage is unavailable. Please ask your teacher to check Firebase.', 'error');
+                    }
+                    if (!isStudentDrawMode) showToast('⚠️ 作品同步失敗，請確認 Firestore Rules');
                 }
             );
         }
@@ -1761,6 +1776,7 @@
                 getSettingsDocRef(),
                 (docSnap) => {
                     cloudSettingsLoaded = true;
+                    cloudSettingsError = null;
                     if (!docSnap.exists()) return;
                     const cfg = docSnap.data();
 
@@ -1817,7 +1833,15 @@
                         }
                     }
                 },
-                (err) => console.error('監聽課堂設定失敗:', err)
+                (err) => {
+                    cloudSettingsLoaded = true;
+                    cloudSettingsError = err;
+                    console.error('Classroom settings sync error:', err);
+                    if (isStudioOpen) {
+                        setSubmitFeedback('⚠️ Cloud storage is unavailable. Please ask your teacher to check Firebase.', 'error');
+                    }
+                    if (!isStudentDrawMode) showToast('⚠️ 課堂設定同步失敗，請確認 Firestore Rules');
+                }
             );
         }
 
@@ -1849,35 +1873,53 @@
                 : '目前：作品自動放行（學生只看到送出成功）';
         }
 
+        function setSubmitFeedback(message, severity = 'info') {
+            const el = document.getElementById('submitStatusMsg');
+            el.textContent = message;
+            el.className = message
+                ? 'text-center text-xs font-bold leading-relaxed px-2 ' +
+                  (severity === 'error' ? 'text-[#ffb5bd]' : 'text-[#f3ca5f]')
+                : 'hidden text-center text-xs font-bold leading-relaxed px-2';
+        }
+
         async function submitUserArtwork() {
+            if (submissionPending) return;
             if (isStudentDrawMode && (!cloudReady || !currentUser)) {
-                showToast('⚠️ Unable to submit. Please ask your teacher to check the connection.');
+                setSubmitFeedback('⚠️ Cloud connection is unavailable. Please ask your teacher.', 'error');
+                return;
+            }
+            if (cloudSettingsError || cloudArtworksError) {
+                setSubmitFeedback('⚠️ Cloud database is not ready. Please ask your teacher to check Firestore.', 'error');
                 return;
             }
             if (isStudentDrawMode && !cloudSettingsLoaded) {
-                showToast('⏳ Connecting... Please try again in a moment.');
+                setSubmitFeedback('⏳ Connecting to cloud storage. Please try again shortly.');
                 return;
             }
             if (!allowDrawing) {
-                showToast('Submissions are paused. Please try again later.');
+                setSubmitFeedback('Drawing is paused. Please try again later.', 'error');
                 return;
             }
             if (userStrokes.length === 0) {
-                showToast('🖍️ Add some decorations before you submit!');
+                setSubmitFeedback('🖍️ Add a drawing before you submit!', 'error');
                 return;
             }
 
             const rawAuthor = document.getElementById('authorInput').value.trim();
             const authorLabel = rawAuthor ? `🖍️ ${rawAuthor}` : '🖍️ Student Artist';
             const submitBtn = document.getElementById('submitArtBtn');
+            submissionPending = true;
             submitBtn.disabled = true;
+            document.getElementById('submitArtBtnText').textContent = '⏳ Submitting...';
+            setSubmitFeedback('Sending your decoration to the Christmas Art Wall...');
 
             const cleanStrokes = userStrokes.map(s => ({ width: s.width, points: s.points }));
 
             if (cloudReady && currentUser && fbModules) {
+                let submissionTimer;
                 try {
                     const initialStatus = requireApproval ? 'pending' : 'approved';
-                    await fbModules.addDoc(getArtworksCollectionRef(), {
+                    const cloudWrite = fbModules.addDoc(getArtworksCollectionRef(), {
                         shape: selectedShape,
                         color: selectedColor,
                         strokesJson: JSON.stringify(cleanStrokes),
@@ -1886,7 +1928,14 @@
                         createdAt: Date.now(),
                         creatorUid: currentUser.uid
                     });
+                    await Promise.race([
+                        cloudWrite,
+                        new Promise((_, reject) => {
+                            submissionTimer = setTimeout(() => reject(new Error('FIREBASE_WRITE_TIMEOUT')), 15000);
+                        })
+                    ]);
 
+                    setSubmitFeedback('');
                     closeStudio();
                     playChime('submit');
 
@@ -1899,9 +1948,20 @@
                         showToast('✨ Your artwork is on the wall!');
                     }
                 } catch (e) {
-                    showToast('⚠️ Submission failed. Please try again.');
+                    console.error('Artwork submission failed:', e);
+                    if (e.message === 'FIREBASE_WRITE_TIMEOUT') {
+                        setSubmitFeedback('⚠️ Firebase has not confirmed this artwork. Ask your teacher to check the wall before trying again.', 'error');
+                    } else if (e.code === 'permission-denied') {
+                        setSubmitFeedback('⚠️ The cloud database refused this artwork. Please ask your teacher to check Firestore rules.', 'error');
+                    } else {
+                        setSubmitFeedback('⚠️ Could not submit. Please check the connection and try again.', 'error');
+                    }
+                    showToast('⚠️ Submission not confirmed.');
                 } finally {
+                    clearTimeout(submissionTimer);
+                    submissionPending = false;
                     submitBtn.disabled = false;
+                    document.getElementById('submitArtBtnText').textContent = '✨ Submit My Decoration';
                 }
             } else {
                 // 單機預覽備援模式（純記憶體運作）
@@ -1922,6 +1982,9 @@
                 closeStudio();
                 playChime('submit');
                 submitBtn.disabled = false;
+                submissionPending = false;
+                document.getElementById('submitArtBtnText').textContent = '✨ Submit My Decoration';
+                setSubmitFeedback('');
                 if (requireApproval) {
                     showToast('✨ Preview submitted. No cloud connection.');
                 } else {
